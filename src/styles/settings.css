@@ -1,0 +1,39 @@
+.settings-dialog { position: fixed; margin: auto; padding: 0; border: 0; background: transparent; color: var(--text); width: 480px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; border-radius: var(--radius-xl); box-shadow: var(--shadow-dialog); }
+.settings-dialog::backdrop { background: var(--backdrop); backdrop-filter: blur(8px); }
+.dialog-content { padding: var(--space-8); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); }
+.dialog-header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-4); }
+.dialog-header .eyebrow { font-size: 9px; }
+.dialog-header h2 { font-family: var(--font-display); font-size: var(--text-title); font-weight: 500; letter-spacing: -.04em; margin-top: var(--space-2); }
+.dialog-content > .muted { font-size: var(--text-sm); line-height: var(--line-body); margin-top: var(--space-3); }
+.appearance-fieldset { padding: 0; border: 0; margin-top: var(--space-8); min-width: 0; }
+.appearance-fieldset legend { font-size: var(--text-md); font-weight: 500; margin-bottom: var(--space-4); }
+.theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.theme-option { position: relative; cursor: pointer; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.theme-option:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.theme-option[data-selected="true"] { border-color: var(--text); background: var(--surface-raised); }
+.theme-option:has(input:focus-visible) { outline: var(--focus-width) solid var(--focus); outline-offset: var(--focus-offset); }
+.theme-option input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 1; margin: 0; }
+.theme-option input:focus-visible { outline: none; }
+.theme-preview { display: grid; grid-template-columns: 20% 1fr; grid-template-rows: 15px 1fr; gap: 4px; height: 65px; padding: 6px; border: 1px solid rgb(128 128 128 / 20%); border-radius: 4px; background: #f4f4f1; }
+.theme-preview > span { border-radius: 2px; background: #dedfd9; }
+.theme-preview > span:first-child { grid-row: 1 / 3; }
+.theme-preview > span:last-child { background: #fff; border: 1px solid rgb(0 0 0 / 7%); }
+.preview-dark { background: #0b0b0b; }
+.preview-dark > span { background: #282828; }
+.preview-dark > span:last-child { background: #171717; border-color: rgb(255 255 255 / 12%); }
+.preview-system { background: linear-gradient(90deg, #f4f4f1 50%, #0b0b0b 50%); }
+.preview-system > span:nth-child(2) { background: linear-gradient(90deg, #dedfd9 35%, #282828 35%); }
+.preview-system > span:last-child { background: linear-gradient(90deg, #fff 35%, #171717 35%); }
+.theme-option-label { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs); padding: var(--space-3) 2px var(--space-1); color: var(--text-secondary); }
+.theme-option[data-selected="true"] .theme-option-label { color: var(--text); }
+.theme-check { opacity: 0; margin-left: auto; }
+.theme-option[data-selected="true"] .theme-check { opacity: 1; }
+.preference-row { display: flex; align-items: start; gap: var(--space-6); margin-top: var(--space-8); border-top: 1px solid var(--border); padding-top: var(--space-6); }
+.preference-row label { font-size: var(--text-md); font-weight: 500; cursor: pointer; }
+.preference-row p { font-size: var(--text-xs); color: var(--text-secondary); line-height: var(--line-body); margin-top: var(--space-2); max-width: 280px; }
+.switch { appearance: none; width: 34px; height: 20px; flex-shrink: 0; border-radius: var(--radius-pill); border: 1px solid var(--border-strong); background: var(--surface-hover); position: relative; cursor: pointer; margin: 1px 0 0 auto; }
+.switch::before { content: ''; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-secondary); }
+.switch:checked { background: var(--text); border-color: var(--text); }
+.switch:checked::before { background: var(--canvas); transform: translateX(14px); }
+.settings-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); font-size: 10px; color: var(--text-tertiary); margin-top: var(--space-8); }
+@media (max-width: 480px) { .dialog-content { padding: var(--space-6); } .theme-options { gap: var(--space-2); } .theme-option-label { gap: 4px; } .theme-check { width: 10px; } }

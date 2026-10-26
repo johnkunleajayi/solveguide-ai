@@ -1,0 +1,49 @@
+/* Motion communicates arrival and response; it never represents fake AI activity. */
+:where(body, .sidebar, .topbar, .workbench, .context-strip, .dialog-content, .nav-item, .theme-option, .switch, .icon-button, .button) {
+  transition: background-color var(--duration-theme) var(--ease-out), color var(--duration-theme) var(--ease-out),
+    border-color var(--duration-theme) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+.switch::before { transition: transform var(--duration-fast) var(--ease-out), background-color var(--duration-theme) var(--ease-out); }
+.reveal { animation: content-arrive var(--duration-reveal) var(--ease-cinematic) both; }
+.workbench.reveal { animation-delay: 70ms; }
+.workspace-footer.reveal { animation-delay: 130ms; }
+.luminous-text { animation: light-pass 18s ease-in-out infinite; }
+.main-shell::before { animation: ambient-drift 26s ease-in-out infinite alternate; }
+.settings-dialog[open] { animation: dialog-arrive 240ms var(--ease-cinematic) both; }
+.workbench::before {
+  content: ''; position: absolute; pointer-events: none; z-index: 0; top: 0; left: 0;
+  width: 380px; height: 380px; border-radius: 50%; background: radial-gradient(circle, var(--light), transparent 68%);
+  transform: translate3d(calc(var(--spot-x, -500px) - 50%), calc(var(--spot-y, -500px) - 50%), 0);
+  opacity: 0; transition: opacity var(--duration-theme) var(--ease-out);
+}
+.workbench[data-lit="true"]::before { opacity: 1; }
+.pointer-light { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 1000; pointer-events: none; opacity: 0; }
+.pointer-light, .pointer-light * { pointer-events: none !important; }
+.pointer-light[data-visible="true"] { opacity: 1; }
+.pointer-aura { position: absolute; width: 86px; height: 86px; left: -43px; top: -43px; border-radius: 50%; background: radial-gradient(circle, var(--light-strong), transparent 65%); }
+.pointer-ring { position: absolute; width: 12px; height: 12px; left: -6px; top: -6px; border: 1px solid var(--border-strong); border-radius: 50%; opacity: .55; transition: transform var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out); }
+.pointer-light[data-interactive="true"] .pointer-ring { transform: scale(2.3); opacity: .85; }
+.pointer-light[data-pressed="true"] .pointer-ring { transform: scale(.7); opacity: 1; }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :root[data-pointer-enhanced="true"] :where(.app-shell, .app-shell button, .app-shell a, .app-shell label, .app-shell input) { cursor: var(--cursor), auto; }
+  :root[data-pointer-enhanced="true"] :where(.app-shell button, .app-shell a, .app-shell label, .app-shell input) { cursor: var(--cursor), pointer; }
+  :root[data-pointer-enhanced="true"] :where(.app-shell p, .app-shell h1, .app-shell h2, .app-shell h3, .tagline) { cursor: text; }
+  :root[data-pointer-enhanced="true"] :where(.app-shell button *, .app-shell a *, .app-shell label *) { cursor: inherit; }
+  .pointer-light[data-visible="true"], .workbench[data-lit="true"]::before { will-change: transform; }
+}
+@keyframes content-arrive { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes light-pass { 0%, 25%, 100% { background-position: 0% 50%; } 65% { background-position: 100% 50%; } }
+@keyframes ambient-drift { from { transform: translateY(0); } to { transform: translateY(18px); } }
+@keyframes dialog-arrive { from { opacity: 0; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .pointer-light, .workbench::before { display: none !important; }
+  .button:hover, .button:active { transform: none; }
+}
+@media (hover: none), (pointer: coarse) { .pointer-light, .workbench::before { display: none; } }
+@media (forced-colors: active) {
+  .luminous-text { background: none; -webkit-text-fill-color: CanvasText; color: CanvasText; text-shadow: none; }
+  .pointer-light, .workbench::before { display: none; }
+  .button, .nav-item.active, .switch { border: 1px solid ButtonText; }
+  .theme-option:has(input:checked) { outline: 1px solid Highlight; }
+}
