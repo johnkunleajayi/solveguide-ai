@@ -6,7 +6,7 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 6
+## Current scope: Milestone 7
 
 SolveGuide CAPTURES, UNDERSTANDS, RECOMMENDS and EXPLAINS for learning and authorized
 practice. Preserve working native capture and separate vision extraction. Answers
@@ -15,7 +15,8 @@ never combine capture/vision/recommendation into an uncontrolled paid prompt.
 Google OIDC and PostgreSQL/SQLAlchemy/Alembic now wrap the stable AI pipeline.
 Region remains unavailable. Do not add learning history, Context
 Library, uploads, RAG, embeddings, vector search, Session Preparation, payments,
-analytics, automatic/continuous capture or capture exclusion.
+analytics or automatic/continuous capture. Milestone 7 adds only supported native
+capture protection for SolveGuide's own main window.
 
 Preserve the exact tagline: "Understand the question. Find the answer. Learn why."
 Preserve existing working capture, settings, keyboard and responsive behavior.
@@ -113,8 +114,8 @@ Session Preparation (work description, material selection/review, reasoning mode
 begin), GENERAL / CONTEXT GUIDED / MATERIALS ONLY modes. Context Guided should be
 the default with selected materials while broader knowledge remains available;
 Materials Only must communicate insufficient support. Do not implement these yet.
-Future region capture and supported native screen-share privacy belong behind
-Tauri/Rust boundaries, not CSS. No anti-proctoring, monitoring/detection evasion or
+Future region capture stays native. Screen-share privacy now lives behind the
+Tauri/Rust boundary, not CSS. No anti-proctoring, monitoring/detection evasion or
 security circumvention. Keep tokens and browser primitives reusable for a future
 web application without creating a separate web app now.
 
@@ -172,7 +173,7 @@ control and hand off exact native/live steps; never bypass the limitation.
 
 README contains the contract, supported types, privacy, cost controls and future
 selected-context boundary. Keep future Context Library/RAG/materials modes/session
-preparation documented only. Do not proceed beyond Milestone 6 or commit/push.
+preparation documented only. Do not proceed beyond Milestone 7 or commit/push.
 
 ## Milestone 6 platform invariants
 
@@ -230,3 +231,33 @@ ALLOW_TEST_DATABASE_RESET=1; never point it at a database with needed accounts.
 Real Google login is manual with the user, never automate credentials or consent.
 README contains exact Neon/Google setup, env variables, migration and manual steps.
 No external infrastructure, later features, commits or pushes without authorization.
+
+## Milestone 7 screen-share privacy
+
+`src-tauri/src/privacy.rs` owns a device-local preference and typed effective state;
+`privacy/windows.rs` alone owns the Win32 privacy calls. Use the Tauri-provided HWND,
+validate current-process/top-level ownership, call SetWindowDisplayAffinity with
+WDA_EXCLUDEFROMCAPTURE (ON) or WDA_NONE (OFF), and verify GetWindowDisplayAffinity.
+Never accept a frontend HWND/URL/path. Commands are main-window-only. No broad new
+Tauri permissions or backend/auth/AI changes are needed.
+
+Fresh preference is ON. Rust reads `.cache/preferences/screen-share-privacy.json`
+before first show and applies/verifies protection on the initially unshown window.
+Normal first show always proceeds even on protection failure; initial visibility
+ordering is not the protection mechanism. Explicit ON/OFF saves atomically. Corrupt
+or unreadable preferences default ON; persistence errors are separately reported.
+Only a boolean is stored, with no account/server dependency or image/history data.
+
+Windows exclusion requires 10 version 2004/build 19041 or newer; use the documented
+local WinRT OS-version query, not manifest-sensitive assumptions. Older Windows and
+non-Windows report unsupported; failed capability/API/readback reports failed, never
+false enabled. State includes preference, capability, effective result, persistence
+and sanitized issue. Logs may include enum/numeric error classifications, never HWNDs,
+window titles, image bytes, questions or answers. No telemetry is sent.
+
+Capture keeps its existing self-process filter; unknown PID is excluded too. Other
+applications and monitor sources remain available. Never disable affinity during
+SolveGuide capture. Actual monitor/external capture behavior needs visual manual
+verification; API readback and adapter tests do not prove universal capture exclusion.
+Keep exact Vite exclusions. No hooks/injection, process hiding, third-party control,
+anti-proctoring, monitoring evasion, DRM or guaranteed invisibility claims.

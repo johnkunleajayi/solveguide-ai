@@ -37,3 +37,8 @@
 .switch:checked::before { background: var(--canvas); transform: translateX(14px); }
 .settings-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); font-size: 10px; color: var(--text-tertiary); margin-top: var(--space-8); }
 @media (max-width: 480px) { .dialog-content { padding: var(--space-6); } .theme-options { gap: var(--space-2); } .theme-option-label { gap: 4px; } .theme-check { width: 10px; } }
+.privacy-settings { margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--border); }
+.privacy-row { margin-top: var(--space-4); padding-top: 0; border-top: 0; }
+.privacy-status { font-size: var(--text-sm); line-height: var(--line-body); margin-top: var(--space-3); }
+.privacy-limit { font-size: var(--text-xs); color: var(--text-secondary); line-height: var(--line-body); margin-top: var(--space-3); }
+.privacy-settings .button { margin-top: var(--space-3); }

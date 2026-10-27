@@ -80,10 +80,16 @@ unsafe extern "system" fn monitor_callback(
     }
     BOOL(1)
 }
+fn external_window_process(process_id: u32, own_process_id: u32) -> bool {
+    process_id != 0 && process_id != own_process_id
+}
 unsafe fn window_source(hwnd: HWND) -> Option<Source> {
     let mut pid = 0;
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == std::process::id() || !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+    if !external_window_process(pid, std::process::id())
+        || !IsWindowVisible(hwnd).as_bool()
+        || IsIconic(hwnd).as_bool()
+    {
         return None;
     }
     let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
@@ -124,6 +130,7 @@ unsafe fn window_source(hwnd: HWND) -> Option<Source> {
         process_id: pid,
     })
 }
+
 unsafe extern "system" fn window_callback(hwnd: HWND, data: LPARAM) -> BOOL {
     if let Some(source) = window_source(hwnd) {
         (*(data.0 as *mut Vec<Source>)).push(source);
@@ -371,4 +378,15 @@ pub fn capture(mut source: Source) -> Result<CaptureResult> {
             .as_millis() as u64,
         image_base64: base64::engine::general_purpose::STANDARD.encode(png_bytes),
     })
+}
+
+#[cfg(test)]
+mod source_filter_tests {
+    use super::external_window_process;
+    #[test]
+    fn self_and_unknown_processes_are_excluded_other_apps_remain() {
+        assert!(!external_window_process(42, 42));
+        assert!(!external_window_process(0, 42));
+        assert!(external_window_process(100, 42));
+    }
 }

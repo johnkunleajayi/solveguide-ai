@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Check, Monitor, Moon, Sun, X } from 'lucide-react'
 import type { Theme } from '../hooks/useTheme'
 import { AccountPanel } from './AccountPanel'
+import { PrivacySettings } from './PrivacySettings'
 
 interface Props {
   open: boolean
@@ -37,6 +38,7 @@ export function SettingsDialog({ open, onClose, theme, setTheme, pointerLight, s
         </header>
         <p id="settings-description" className="muted">A little less distraction. A little more focus.</p>
         <AccountPanel />
+        <PrivacySettings active={open} />
         <fieldset className="appearance-fieldset">
           <legend>Appearance</legend>
           <div className="theme-options">

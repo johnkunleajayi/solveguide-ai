@@ -303,9 +303,9 @@ the exclusive source unless explicitly requested.
 
 No uploads, parsing, retrieval, RAG, embeddings, vector storage or session workflow
 is implemented. Future user-selected region capture belongs in Tauri/Rust. Ordinary
-screen-sharing privacy may later use supported native OS capture exclusion, never
+screen-sharing privacy now uses supported native OS capture exclusion on Windows, never
 CSS tricks or anti-proctoring, monitoring/detection evasion or security circumvention.
-No capture exclusion is implemented. The eventual web experience may reuse visual
+See Milestone 7 below for scope and limitations. The eventual web experience may reuse visual
 tokens, observation presentation and browser interaction primitives; no separate
 web application is created here.
 
@@ -666,4 +666,87 @@ break capture/read/recommend. Real Google login is intentionally a joint manual 
 Accounts persist identity/session metadata **only**. Captures still live in memory;
 Read Question explicitly sends an image to OpenAI, while Get Suggested Answer sends
 only QuestionObservation. No capture/question/answer history, uploads, Context Library,
-RAG, quotas, billing or capture exclusion is introduced.
+RAG, quotas or billing is introduced by accounts. Screen-share privacy is a separate
+native-only capability described below.
+
+## Milestone 7: Windows screen-share privacy
+
+Settings → Privacy → **Screen-share privacy** controls only SolveGuide's own main
+top-level window. It defaults **ON** on a fresh profile and requires no account,
+backend, database, migration or network call. The existing visual system, themes,
+Pointer Light and accessible Settings controls are preserved.
+
+`src/privacy/` owns the typed client/controller; `PrivacySettings.tsx` renders the
+preference separately from the effective native state. Main-window-only Tauri
+commands call `src-tauri/src/privacy.rs`; the small `privacy/windows.rs` adapter
+obtains the HWND from the existing Tauri 2.12.5 `WebviewWindow::hwnd()` method and
+validates that it is a live, current-process-owned top-level window. React never
+provides or receives a HWND. No broad Tauri permissions are added.
+
+The adapter uses documented **SetWindowDisplayAffinity** with
+**WDA_EXCLUDEFROMCAPTURE (0x00000011)** for ON and **WDA_NONE** for OFF, then verifies
+the result with **GetWindowDisplayAffinity**. A documented local WinRT OS-version
+query gates exclusion support at Windows 10 version 2004/build 19041 or newer.
+This query sends no telemetry. Older Windows is reported as unsupported rather
+than claiming full exclusion when only older blank-content behavior is available.
+Non-Windows/browser-only previews report unsupported; no web capture protection exists.
+
+Rust loads `.cache/preferences/screen-share-privacy.json` before the main window's
+first show. The window is initially unshown only for startup ordering, affinity is
+applied/verified, then normal local display proceeds even if protection fails.
+Visibility is not used as the protection mechanism. Explicit ON/OFF updates apply
+immediately and atomically save one boolean locally. OFF survives restart; ON does
+too. Corrupt/unreadable preferences fall back to ON. Removing the local profile/cache
+resets to ON. Save failure is reported separately; the current-run preference can
+still apply without falsely claiming that it will survive restart.
+
+The native contract reports capability (`supported`: true/false/unknown),
+`preferenceEnabled`, `effectiveState` (enabled/disabled/unsupported/failed),
+`preferencePersisted` and a sanitized issue classification. Setter, capability or
+readback failures never become false success. The application stays usable, Settings
+reports unconfirmed/unavailable protection and offers retry where appropriate.
+Development logs contain only state/enum/numeric error classifications, never raw
+HWNDs, source titles, screenshots, questions or answers.
+
+The existing capture picker already excludes SolveGuide's own process windows;
+regression coverage now verifies self/unknown-process exclusion while other process
+windows remain eligible. Monitor sources remain available. Privacy never disables
+Windows capture generally and is never suspended to capture a monitor or another
+user-selected application. No capture-engine, AI provider or auth/database redesign
+is involved. Captures remain ephemeral; toggling privacy sends/uploads no screenshot.
+
+The pre-existing monitor-capture wrapper briefly hides/restores the companion while
+taking its own monitor frame. That behavior is unchanged and independent of display
+affinity. Absence from that preview alone therefore cannot prove capture exclusion;
+use an external supported monitor capture/share with SolveGuide visibly open to
+isolate the affinity behavior. No privacy protection is turned off in either path.
+
+Windows affinity applies only to supported capture paths while DWM composition is
+available. This is **not DRM or a guarantee against every capture method**, privileged
+or unsupported capture implementations, or physical cameras. There is no injection,
+hooking, other-process manipulation, process hiding, anti-proctoring or monitoring/
+detection-evasion behavior. See Microsoft's
+[SetWindowDisplayAffinity documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity).
+
+Automated tests use a narrow mocked platform adapter for state transitions/failures,
+real local preference-file roundtrips, version-gate/source-filter logic and frontend
+native-contract/UI/controller checks. They do not prove external capture exclusion.
+**Actual external and monitor-capture pixel behavior remains pending visual manual
+verification on the available machine**, including the capture application used.
+
+### Manual native verification (after automated checks)
+
+1. Confirm SolveGuide remains visible/usable locally and Privacy reports the native
+   state; check dark/light/System, keyboard focus and compact Settings scrolling.
+2. With privacy ON, open a harmless practice question in Chrome. Analyze Question →
+   Window: confirm SolveGuide is absent, explicitly select Chrome and capture it.
+3. Read Question → Get Suggested Answer; verify the existing pipeline still works.
+   These are explicit provider requests and may incur charges; privacy toggles do not.
+4. Capture the monitor containing SolveGuide using the existing monitor workflow.
+   Inspect whether Windows omits/blanks the protected window. Do not disable
+   protection merely to make that capture convenient; record the actual result.
+5. Use an ordinary supported external screenshot/screen-share path. Inspect its
+   actual output with privacy ON. API readback alone is not visual verification.
+6. Explicitly turn privacy OFF; repeat that external capture and verify ordinary
+   behavior. Restart SolveGuide and confirm OFF restored. Turn ON, restart again,
+   verify ON restored, and leave ON as the final product preference.
