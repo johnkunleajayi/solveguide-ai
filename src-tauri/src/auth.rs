@@ -47,17 +47,103 @@ pub struct AuthError {
     message: &'static str,
 }
 type Result<T> = std::result::Result<T, AuthError>;
-fn error(code: &str) -> AuthError {
+pub(crate) fn error(code: &str) -> AuthError {
     AuthError {
         code: code.into(),
         message: "Sign-in could not be completed. Check backend configuration or try again.",
     }
 }
-fn authorize(window: &tauri::WebviewWindow) -> Result<()> {
+pub(crate) fn authorize(window: &tauri::WebviewWindow) -> Result<()> {
     if window.label() != "main" {
         return Err(error("auth_forbidden"));
     }
     Ok(())
+}
+
+impl AuthState {
+    pub(crate) fn session_epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
+    }
+
+    pub(crate) async fn library_credential_present(&self, epoch: u64) -> Result<()> {
+        if self.credentials.lock().await.token.is_none() || epoch != self.session_epoch() {
+            return Err(error("sign_in_required"));
+        }
+        Ok(())
+    }
+
+    // Only the typed native library adapter calls this. Credentials never cross IPC.
+    pub(crate) async fn library_request(
+        &self,
+        epoch: u64,
+        request: crate::context_library::Request,
+    ) -> Result<serde_json::Value> {
+        self.library_credential_present(epoch).await?;
+        let token = self
+            .credentials
+            .lock()
+            .await
+            .token
+            .clone()
+            .ok_or_else(|| error("sign_in_required"))?;
+        let mut builder = self
+            .client
+            .request(
+                request.method,
+                format!(
+                    "http://127.0.0.1:8000/api/v1/context/documents{}",
+                    request.suffix
+                ),
+            )
+            .header("Origin", ORIGIN)
+            .bearer_auth(&token)
+            .timeout(Duration::from_secs(60));
+        if let Some((content_type, filename, bytes)) = request.body {
+            builder = builder.header("Content-Type", content_type).body(bytes);
+            if let Some(filename) = filename {
+                builder = builder.header("X-Document-Filename", filename);
+            }
+        }
+        if epoch != self.session_epoch() {
+            return Err(error("sign_in_required"));
+        }
+        let mut response = builder
+            .send()
+            .await
+            .map_err(|_| error("backend_unavailable"))?;
+        let status = response.status().as_u16();
+        if status == 401 {
+            let mut credentials = self.credentials.lock().await;
+            if credentials.token.as_deref() == Some(&token) {
+                credentials.token = None;
+            }
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| error("backend_unavailable"))?
+        {
+            if bytes.len() + chunk.len() > 8 * 1024 * 1024 {
+                return Err(error("invalid_response"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if epoch != self.session_epoch() {
+            return Err(error("sign_in_required"));
+        }
+        let raw: serde_json::Value = if status == 204 {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).map_err(|_| error("invalid_response"))?
+        };
+        if status >= 400 {
+            return Ok(
+                serde_json::json!({"ok":false,"status":status,"error":{"code":if status == 401 { "sign_in_required" } else {raw["error"]["code"].as_str().unwrap_or("library_unavailable")}}}),
+            );
+        }
+        Ok(serde_json::json!({"ok":true,"status":status,"data":raw}))
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -492,6 +578,20 @@ mod tests {
         assert!(valid_secret(&"a".repeat(43)));
         assert!(!valid_secret(&"a".repeat(44)));
         assert!(!valid_secret(&"/".repeat(43)));
+    }
+    #[test]
+    fn library_rejects_credentials_from_an_old_login_epoch() {
+        let state = AuthState::default();
+        tauri::async_runtime::block_on(async {
+            state.credentials.lock().await.token = Some("a".repeat(43));
+            let old = state.session_epoch();
+            state.epoch.fetch_add(1, Ordering::SeqCst);
+            assert!(state.library_credential_present(old).await.is_err());
+            assert!(state
+                .library_credential_present(state.session_epoch())
+                .await
+                .is_ok());
+        });
     }
     #[test]
     fn ai_request_requires_native_credential_without_network() {

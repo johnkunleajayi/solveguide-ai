@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .cache/
+# Context Library originals use .cache/context-library (already excluded and not Vite-watched).
 .tools/
 src-tauri/target/
 src-tauri/gen/

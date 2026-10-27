@@ -13,7 +13,9 @@ available before sign-in. There is no SolveGuide browser application. A future
 public website is for product information, downloads, documentation/support and
 possible account/commercial surfaces, not a duplicate learning app.
 Milestone 6 adds PostgreSQL-backed Google identity and server-side sessions around
-that pipeline. Signing in never saves captures, questions or answers.
+that pipeline. Signing in never saves captures, questions or answers. Milestone 9
+adds an authenticated, reusable Context Library for explicitly added documents;
+these documents are persistent and are not used by the AI pipeline yet.
 
 ## Canonical workspace
 
@@ -115,7 +117,7 @@ to OpenAI. Only OpenAI is implemented. `backend/app/answer/` contains separate
 schemas, provider protocol, centralized prompt, OpenAI adapter, deterministic service
 and API route. No microservice, OCR engine or retrieval is introduced by vision;
 authentication/database infrastructure is described in Milestone 6 below. No
-Context Library or history is implemented.
+learning history is implemented. The reusable Context Library is described in Milestone 9 below.
 
 ## Capture and Read Question
 
@@ -223,7 +225,8 @@ The backend never saves the image, creates history, uploads a Files API object,
 logs base64/text/observations or stores data in a database. Request image buffers
 become unreachable after completion. Logs contain only allowlisted event metadata
 (request ID, outcome code and duration); SDK/HTTP debug logging is suppressed.
-Response caching is disabled. Only appearance and Pointer Light preferences persist.
+Response caching is disabled. Appearance and Pointer Light preferences persist locally. Identity/session metadata and
+explicitly added Context Library materials persist separately from live learning content.
 Clear/reload/exit release current UI capture/observation references. There is no
 secure-memory-wipe promise; normal OS pagefile/crash policies remain external.
 
@@ -296,10 +299,10 @@ Vision may misread text, symbols, layout or selection counts: review warnings an
 original image. Recommendations use the observation and general knowledge; selected-material
 reasoning modes and retrieval remain outside this milestone.
 
-### Reusable Context Library and Session Preparation (not implemented)
+### Reusable Context Library and future Session Preparation
 
-Future PDF, DOCX, TXT, pasted notes and supported materials belong to a reusable
-library across sessions; users must not repeatedly upload the same material. A
+Milestone 9 provides reusable PDF, DOCX, TXT and pasted notes across sessions;
+users do not need to add the same material repeatedly. A
 session may identify the work, select/review library material references, choose
 a reasoning mode and begin. Selected materials guide reasoning without becoming
 the exclusive source unless explicitly requested.
@@ -310,8 +313,8 @@ the exclusive source unless explicitly requested.
 | CONTEXT GUIDED | Selected materials guide reasoning while broader knowledge stays available; default when materials are selected |
 | MATERIALS ONLY | Answer only with sufficient selected-material support and communicate insufficiency |
 
-No uploads, parsing, retrieval, RAG, embeddings, vector storage or session workflow
-is implemented. Future user-selected region capture belongs in Tauri/Rust. Ordinary
+Uploads and deterministic parsing are implemented in Milestone 9. Retrieval, RAG,
+embeddings, vector storage and session preparation are not implemented. Future user-selected region capture belongs in Tauri/Rust. Ordinary
 screen-sharing privacy now uses supported native OS capture exclusion on Windows, never
 CSS tricks or anti-proctoring, monitoring/detection evasion or security circumvention.
 See Milestone 7 below for scope and limitations. Shared visual primitives may also
@@ -458,7 +461,7 @@ React/Rust. Images are not resent for answers, and neither question nor answer p
 are logged. Answer logs contain only event/request ID, outcome and duration. Keep
 `store=False`; existing provider-retention caveats still apply. Milestone 5 introduced
 no persistence/authentication. Milestone 6 stores identity/session metadata only;
-Context Library, RAG, uploads, region capture, analytics and question/answer history remain absent.
+Milestone 9 adds only the separate Context Library. RAG, region capture, analytics and question/answer history remain absent.
 
 ### Controlled live reasoning check and manual fallback
 
@@ -483,7 +486,7 @@ If Computer Use cannot safely access a browser's current URL, stop browser autom
 Do not bypass that guard through another browser-control mechanism. Leave the live
 UI check pending for the user rather than reporting mocked tests as live success.
 Future selected-context input belongs beside QuestionObservation at the service boundary;
-Context Library, RAG, Context Guided/Materials Only modes and Session Preparation remain
+RAG, Context Guided/Materials Only modes and Session Preparation remain
 unimplemented, as described above.
 
 ## Milestone 6: authenticated platform foundation
@@ -579,7 +582,7 @@ separate web app, web redirect destination or second authentication system is cr
 
 Public user DTO: id, email, email_verified, display_name, avatar_url. No Google subject,
 hashes, provider credentials or database details. `optional_current_user` and
-`required_current_user` are reusable dependencies. Future user-owned Context Library
+`required_current_user` are reusable dependencies. User-owned Context Library
 and Session Preparation must use required authentication and server-side `user.id`
 ownership filters; never trust a client-supplied owner ID. They are not implemented.
 
@@ -673,9 +676,9 @@ signed-out state. Repeat manually if needed to verify an existing account reuses
 the user row. Check browser denial/cancel and app Cancel sign-in; no error should
 break capture/read/recommend. Real Google login is intentionally a joint manual test.
 
-Accounts persist identity/session metadata **only**. Captures still live in memory;
+Accounts persist identity/session metadata and explicitly added Context Library materials. Captures still live in memory;
 Read Question explicitly sends an image to OpenAI, while Get Suggested Answer sends
-only QuestionObservation. No capture/question/answer history, uploads, Context Library,
+only QuestionObservation. No capture/question/answer history,
 RAG, quotas or billing is introduced by accounts. Screen-share privacy is a separate
 native-only capability described below.
 
@@ -805,7 +808,7 @@ charges. No automatic provider retry was added.
 
 Settings remain available while signed out: Screen-share privacy, themes, Pointer
 Light and keyboard/accessibility behavior. Windows privacy remains active before
-and after authentication. Accounts persist identity/session metadata only; screenshots,
+and after authentication. Accounts persist identity/session metadata and explicitly added library materials; screenshots,
 questions, options, recommendations and explanations remain ephemeral. No telemetry,
 learning history or automatic uploads were added. No database migration is required;
 the schema remains `0001_auth`.
@@ -832,3 +835,143 @@ provider-backed service execution, without changing Google sign-in, capture or p
    retry. Unauthenticated API calls must return 401 without provider execution.
 7. Confirm privacy stays independently effective throughout. Real Google login and
    native capture/AI interaction remain manual tests; automated provider tests are mocked.
+
+
+## Milestone 9: reusable Context Library foundation
+
+Context Library is part of the authenticated Windows desktop product. It manages
+PDF, DOCX, TXT and pasted plain text for reuse across sessions. It does **not**
+ground current recommendations: no retrieval, RAG, embeddings, vector store,
+Context Guided/Materials Only mode or Session Preparation is implemented. Library
+operations never call VisionProvider, AnswerProvider or OpenAI.
+
+### Architecture, ownership and storage
+
+`src/library` owns the typed native client, runtime response guards and disposable
+UI controller; `ContextLibrary` provides list, upload/paste, extraction status,
+detail/text preview, rename and confirmed deletion. The learning workspace stays
+mounted when switching views. Logout unmounts the authenticated view and drops
+library content; late responses cannot restore it or trigger follow-up requests.
+
+React sends only typed operations through `library_request`. Rust opens a filtered,
+parented Windows file dialog using rfd (MIT), reads only the explicitly chosen file
+with a 20 MiB hard ceiling, then sends a bounded raw-body upload to the fixed
+loopback backend. Filenames are percent-encoded in a metadata header; no source
+path, binary content, session credential or arbitrary URL is accepted through
+frontend IPC. The selected path and bearer credential stay native. Authentication
+is checked before opening the picker and again by the upload endpoint. Native
+session-epoch checks discard results from an earlier login/logout generation.
+No broad Tauri filesystem permission or CSP change is required.
+
+`backend/app/context_library` separates authenticated API, service, Pydantic DTOs,
+SQLAlchemy model, deterministic extraction and DocumentStorage protocol.
+LocalDocumentStorage uses backend-configured private runtime storage, default
+`D:\solveguide-ai\.cache\context-library`, with opaque generated UUID hex keys,
+exclusive writes, traversal/symlink rejection and idempotent deletion. It is never
+served as static content. `.cache` is ignored by Git and Vite. Keep this directory
+private to the backend OS account; it is plaintext local development storage, not
+an encrypted vault. Future object storage can implement the same protocol.
+Back up the database and original-file storage together if durable backup is needed.
+
+PostgreSQL `context_documents` contains owner FK, UUID, title, original basename,
+source/document type, opaque storage reference, size, extraction status/error,
+extracted text, structural offsets/counts and timezone-aware timestamps. The
+owner/created/id index supports keyset pagination (50 summaries per page; text is
+returned only on detail). Every lookup/update/delete includes authenticated owner
+identity. Cross-user and absent documents both return 404. User deletion is
+restricted while owned documents exist; there is no account-deletion workflow yet.
+
+### Limits and extraction
+
+Backend-only settings, also listed in `backend/.env.example`:
+
+| Setting | Default |
+| --- | --- |
+| CONTEXT_UPLOAD_BYTES | 10485760 (10 MiB; configurable up to 20 MiB) |
+| CONTEXT_TEXT_CHARACTERS | 500000 Unicode code points (up to 1000000) |
+| CONTEXT_MAX_PAGES | 200 PDF pages |
+| CONTEXT_MAX_BLOCKS | 5000 structural text blocks |
+| CONTEXT_EXPANDED_BYTES | 33554432 (32 MiB expanded DOCX/PDF stream budget) |
+| CONTEXT_STORAGE_DIRECTORY | workspace .cache/context-library |
+
+Authenticated `/limits` reports upload, text and page limits to the desktop.
+Uploads stream into bounded memory with a 20-second transfer deadline; there is
+no multipart temporary-file spooling. JSON pasted text/metadata are also bounded.
+Extension, declared MIME, binary signatures, text decoding and parser safety
+checks apply. DOCX ZIP member count/expanded bytes/XML complexity are bounded;
+macros, encrypted ZIP members and XML entities/DTDs are rejected. Nothing is
+executed or extracted to arbitrary paths.
+
+pypdf 6.21.3+ performs machine-readable PDF extraction with context-local
+stream/decompression/work/page limits and no external image decoder. Page
+boundaries and offsets are retained. Encrypted/malformed files show extraction
+unavailable; image-only/no-text PDFs show insufficient text, never false success.
+python-docx extracts body paragraphs and tables in document order; headers,
+footnotes, tracked revisions, complex nested tables and exact visual layout are
+not guaranteed. TXT supports strict UTF-8 (optional BOM) and BOM-marked UTF-16;
+unusable binary/control text is rejected. Pasted notes normalize line endings.
+Structural offsets refer to Unicode code points. Blank/ambiguous parser failures
+are sanitized; no OCR occurs. Review extracted text against the original.
+
+Parser work runs off the FastAPI event loop with two parser slots. Bounds reduce
+resource exposure; this local foundation is not a hostile-file sandbox or public
+upload service. Before public deployment, add isolated parser processes with hard
+CPU/memory deadlines, private object storage and deployment abuse controls.
+
+### API, deletion and privacy
+
+All `/api/v1/context/documents` routes require the existing current-user dependency:
+
+- GET base: owned paginated summaries; GET `/limits`: safe configured limits.
+- POST `/upload`: bounded raw PDF/DOCX/TXT; `X-Document-Filename` carries only basename.
+- POST `/text`: JSON title and plain text.
+- GET `/{id}`: owned metadata, extraction state and escaped text preview data.
+- PATCH `/{id}`: title only; DELETE `/{id}`: confirmed removal through desktop UI.
+
+Mutations enforce existing exact desktop origins. Native bearer transport handles
+authentication; React never obtains or stores credentials. Library requests do not
+add a browser application or enable credentialed CORS for document routes.
+
+Deletion first commits a `deleting` tombstone and clears extracted content, then
+removes the binary and finally deletes metadata. Storage or final database failures
+leave a visible, retryable pending-deletion record; retry is idempotent for missing
+files. Upload transaction failure attempts binary compensation. Filesystem and DB
+are not one atomic resource: abrupt process/host failure or simultaneous storage
+and DB failure may require operator reconciliation; no background cleaner is
+introduced. Normal successful deletion removes all three forms of content.
+
+**Two privacy models:** library materials persist because the user explicitly adds
+them. Live screenshots, captured questions, QuestionObservation, recommendations
+and explanations remain ephemeral. Signing in or adding a document does not save
+live content. No history, telemetry, document-provider transmission or prompt
+changes were added. Logs exclude filenames/titles, document text and binary bytes.
+Screen-share privacy protects the same native top-level window and remains unchanged.
+
+### Development and manual verification
+
+From `D:\solveguide-ai`:
+
+```powershell
+npm.cmd run setup:backend
+& .tools/python/Scripts/python.exe -m alembic -c backend/alembic.ini upgrade head
+& .tools/python/Scripts/python.exe -m alembic -c backend/alembic.ini current
+& .tools/python/Scripts/python.exe -m alembic -c backend/alembic.ini check
+npm.cmd run backend
+# Separate terminal in the same workspace:
+npm.cmd run desktop
+```
+
+Migration `0002_context_library` follows immutable `0001_auth`; startup never creates
+tables. Offline upgrade/downgrade/re-upgrade tests render PostgreSQL SQL. Destructive
+integration tests run only with an explicitly disposable TEST_DATABASE_URL and
+ALLOW_TEST_DATABASE_RESET=1; never downgrade the configured real Neon database for tests.
+
+Manual test: sign in, open Context Library, inspect empty state; add disposable
+TXT, DOCX and machine-readable PDF documents, inspect text/status/page boundaries;
+try a scanned PDF; paste titled notes; rename and confirm deletion; restart and
+reauthenticate to confirm remaining library items persist. Test another user for
+isolation if available. Check dark/light/System, Pointer Light, keyboard focus,
+Escape/confirmation focus return and the 640 x 560 compact layout. Then confirm
+Capture -> Read Question -> Get Suggested Answer remains unchanged, materials
+are not used in answers, and Screen-share privacy remains ON. No Google login or
+personal document uploads are performed by automated validation.

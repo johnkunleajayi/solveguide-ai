@@ -6,7 +6,7 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 8
+## Current scope: Milestone 9
 
 SolveGuide CAPTURES, UNDERSTANDS, RECOMMENDS and EXPLAINS for learning and authorized
 practice. Preserve working native capture and separate vision extraction. Answers
@@ -15,8 +15,9 @@ never combine capture/vision/recommendation into an uncontrolled paid prompt.
 Google OIDC and PostgreSQL/SQLAlchemy/Alembic now wrap the stable AI pipeline.
 SolveGuide is desktop-only; Google authentication is mandatory for all core learning
 actions. Local privacy/appearance Settings remain available without authentication.
-Region remains unavailable. Do not add learning history, Context
-Library, uploads, RAG, embeddings, vector search, Session Preparation, payments,
+Region remains unavailable. Milestone 9 adds only authenticated PDF/DOCX/TXT and
+pasted-text Context Library management. Do not add learning history,
+RAG, embeddings, vector search, Session Preparation, payments,
 analytics or automatic/continuous capture. Milestone 7 adds only supported native
 capture protection for SolveGuide's own main window.
 
@@ -60,7 +61,8 @@ this is not a provider zero-retention guarantee. No Files API upload is needed.
 
 Retake/Clear reset observations and abort requests; discard stale responses.
 Cancellation cannot promise a remote request already sent will stop or avoid costs.
-Only appearance preferences and authentication identity/session metadata persist.
+Appearance preferences, authentication identity/session metadata and explicitly
+added Context Library materials persist. Live learning content does not persist.
 Keep capture-result and observation types
 separate for future stages. Pydantic remains authoritative; client guard fails closed.
 QuestionObservation remains neutral and rejects answer/reasoning/correctness fields.
@@ -112,11 +114,12 @@ keyboard and compact windows. Report untested physical multi-monitor/DPI/HDR cas
 
 ## Future architecture (documentation only)
 
-README records a reusable PDF/DOCX/TXT/notes Context Library across sessions, separate
+Milestone 9 implements reusable PDF/DOCX/TXT/notes library management, separate from future
 Session Preparation (work description, material selection/review, reasoning mode,
 begin), GENERAL / CONTEXT GUIDED / MATERIALS ONLY modes. Context Guided should be
 the default with selected materials while broader knowledge remains available;
-Materials Only must communicate insufficient support. Do not implement these yet.
+Materials Only must communicate insufficient support. Reasoning modes and Session
+Preparation remain documentation-only; do not use library text in answers yet.
 Future region capture stays native. Screen-share privacy now lives behind the
 Tauri/Rust boundary, not CSS. No anti-proctoring, monitoring/detection evasion or
 security circumvention. A future website is public presence/download/support,
@@ -175,8 +178,8 @@ answer quality. If a browser URL cannot be verified by Computer Use, stop browse
 control and hand off exact native/live steps; never bypass the limitation.
 
 README contains the contract, supported types, privacy, cost controls and future
-selected-context boundary. Keep future Context Library/RAG/materials modes/session
-preparation documented only. Do not proceed beyond Milestone 8 or commit/push.
+selected-context boundary. Context Library management is now implemented separately; keep RAG/materials modes/session
+preparation documented only. Do not proceed beyond Milestone 9 or commit/push.
 
 ## Milestone 6 platform invariants
 
@@ -296,3 +299,45 @@ confidence semantics, privacy protections and explicit paid actions.
 No migration, history, telemetry, browser app, website or commercial features are added.
 Future entitlement policy may sit after authenticated-user validation and before
 provider services; documentation only, no speculative entitlement abstraction now.
+
+
+## Milestone 9 Context Library invariants
+
+`backend/app/context_library` owns API/service/model/schemas/extraction/storage.
+All document queries include authenticated owner identity; never fetch by UUID
+then trust React to filter. Unknown and cross-owner resources both return 404.
+`context_documents` is the only new table, via Alembic `0002_context_library`.
+Never modify applied `0001_auth` or call create_all(). Preserve PostgreSQL JSONB,
+UUID/timezone timestamps, owner FK and named constraints/index. No future RAG,
+session preparation, histories or billing tables.
+
+DocumentStorage is replaceable. Development LocalDocumentStorage defaults to
+D:\solveguide-ai\.cache\context-library, generated 32-hex keys only, ignored by Git
+and Vite, no static mount. Keep OS directory permissions private. No arbitrary paths
+or storage keys in public DTOs. Originals and extracted text intentionally persist;
+live capture/question/answer content stays ephemeral and account-independent.
+
+Raw-body uploads avoid multipart temp spooling. Enforce authentication before body
+parsing, exact mutation origins, configurable byte/text/page/block/expanded-content
+limits, MIME/extension/signature/encoding checks. Blocking PDF/DOCX parsing runs in
+bounded worker threads. No OCR, XML entity expansion, macro/action execution,
+external decoder, provider request, retrieval, embeddings or prompt changes.
+No titles, notes, binary bytes or parser exceptions in operational logs.
+
+Native `context_library::library_request` accepts typed operations only. File
+selection/read/upload is native, filtered and parented to the main window; no
+React paths or filesystem privileges. AuthState applies native-memory credentials
+and epoch validation. Never expose those credentials through IPC or browser storage.
+Use shared auth invalidation and discard stale responses/follow-up requests.
+
+Deletion durably marks pending, clears text, removes binary, then removes metadata.
+Partial storage/DB failure remains retryable; no false success. Upload DB failures
+compensate stored files. Cross-resource crash atomicity is not guaranteed: disclose
+operator reconciliation limits and do not add a background service speculatively.
+
+Frontend `src/library` and ContextLibrary reuse current tokens/themes/accessibility;
+keep learning state mounted when navigating. Test ownership on every operation,
+parser/storage/commit failure paths, stale responses, auth expiry, CRUD and all
+existing pipeline/privacy/pointer regressions. Generate disposable fixtures under
+.cache; never add user documents or large binary fixtures to Git. Never destructively
+downgrade the user's real Neon database; offline SQL or explicit disposable DB only.

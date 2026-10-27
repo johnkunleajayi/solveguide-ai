@@ -378,7 +378,12 @@ def test_postgres_constraints_metadata_and_url(platform):
         "email = lower(trim(email))",
     ):
         assert sql in ddl
-    assert set(Base.metadata.tables) == {"users", "auth_sessions", "oauth_attempts"}
+    assert set(Base.metadata.tables) == {
+        "users",
+        "auth_sessions",
+        "oauth_attempts",
+        "context_documents",
+    }
     user = User(email=" Mixed@Example.COM ")
     assert user.email == "mixed@example.com"
 

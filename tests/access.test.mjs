@@ -30,6 +30,7 @@ test('app-level gate never mounts core controls before valid auth and keeps loca
     './auth/controller': logic, './components/AuthGate': { AuthGate },
     './components/AnswerWorkspace': { AnswerWorkspace: () => { mounts++; return React.createElement('button', null, 'Analyze Question') } },
     './components/Sidebar': { Sidebar: () => null },
+    './components/ContextLibrary': { ContextLibrary: () => React.createElement('section', null, 'Private library') },
     './components/SettingsDialog': { SettingsDialog: () => React.createElement('aside', null, 'Screen-share privacy · Appearance · Pointer Light') },
     './components/PointerLight': { PointerLight: () => null },
     './hooks/useTheme': { useTheme: () => ({ theme: 'dark', setTheme() {} }) },

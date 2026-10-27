@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = False
     auth_session_hours: int = Field(default=168, ge=1, le=720)
 
+    context_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=20 * 1024 * 1024)
+    context_text_characters: int = Field(default=500_000, ge=1000, le=1_000_000)
+    context_max_pages: int = Field(default=200, ge=1, le=500)
+    context_max_blocks: int = Field(default=5000, ge=200, le=10000)
+    context_expanded_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
+    context_storage_directory: Path = BACKEND_ROOT.parent / ".cache" / "context-library"
+
     @model_validator(mode="after")
     def platform_configuration(self):
         from cryptography.fernet import Fernet

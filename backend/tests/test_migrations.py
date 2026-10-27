@@ -15,6 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from app.auth.models import User
 from app.auth.security import now
 from app.config import Settings
+from app.context_library.service import ContextService
+from app.context_library.storage import LocalDocumentStorage
 from app.database import Base, Database
 from app.runtime import event_loop
 
@@ -28,10 +30,10 @@ def config(output=None):
 
 def test_alembic_offline_upgrade_downgrade_upgrade_and_schema_consistency():
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["0001_auth"]
+    assert script.get_heads() == ["0002_context_library"]
     up, down, again = io.StringIO(), io.StringIO(), io.StringIO()
     command.upgrade(config(up), "head", sql=True)
-    command.downgrade(config(down), "0001_auth:base", sql=True)
+    command.downgrade(config(down), "0002_context_library:base", sql=True)
     command.upgrade(config(again), "head", sql=True)
     assert up.getvalue() == again.getvalue()
     for name in Base.metadata.tables:
@@ -53,7 +55,7 @@ def test_alembic_offline_upgrade_downgrade_upgrade_and_schema_consistency():
     not os.environ.get("TEST_DATABASE_URL") or os.environ.get("ALLOW_TEST_DATABASE_RESET") != "1",
     reason="Requires a dedicated disposable PostgreSQL database and explicit reset opt-in",
 )
-def test_real_postgresql_roundtrip_and_constraints(monkeypatch):
+def test_real_postgresql_roundtrip_and_constraints(monkeypatch, tmp_path):
     """Destructive only on explicit TEST_DATABASE_URL, never application's DATABASE_URL."""
     monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
     command.upgrade(config(), "head")
@@ -82,6 +84,23 @@ def test_real_postgresql_roundtrip_and_constraints(monkeypatch):
                     select(User).where(User.google_subject == "integration-sub")
                 )
                 assert found.email == "test@example.com" and found.created_at.tzinfo is not None
+            service = ContextService(
+                database, LocalDocumentStorage(tmp_path / "documents"), Settings(_env_file=None)
+            )
+            document = await service.create(
+                found.id,
+                "Disposable notes",
+                data=b"Integration reference",
+                kind="txt",
+                filename="notes.txt",
+            )
+            renamed = await service.rename(found.id, document.id, "Renamed notes")
+            assert renamed.title == "Renamed notes" and renamed.updated_at.tzinfo is not None
+            assert (
+                await service.detail(found.id, document.id)
+            ).extracted_text == "Integration reference"
+            await service.delete(found.id, document.id)
+            assert list((tmp_path / "documents").iterdir()) == []
             with pytest.raises(IntegrityError):
                 async with database.sessions() as db, db.begin():
                     db.add(
@@ -103,3 +122,16 @@ def test_real_postgresql_roundtrip_and_constraints(monkeypatch):
     asyncio.run(run(), loop_factory=event_loop)
     command.downgrade(config(), "base")
     command.upgrade(config(), "head")
+
+
+def test_context_migration_roundtrip_preserves_auth_tables():
+    up, down, again = io.StringIO(), io.StringIO(), io.StringIO()
+    command.upgrade(config(up), "0001_auth:0002_context_library", sql=True)
+    command.downgrade(config(down), "0002_context_library:0001_auth", sql=True)
+    command.upgrade(config(again), "0001_auth:0002_context_library", sql=True)
+    assert up.getvalue() == again.getvalue()
+    assert "CREATE TABLE context_documents" in up.getvalue()
+    assert "DROP TABLE context_documents" in down.getvalue()
+    for table in ["users", "auth_sessions", "oauth_attempts"]:
+        assert f"CREATE TABLE {table}" not in up.getvalue()
+        assert f"DROP TABLE {table}" not in down.getvalue()

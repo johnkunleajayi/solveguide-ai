@@ -18,6 +18,9 @@ from app.auth.api import router as auth_router
 from app.auth.boundary import AuthBoundary, PlatformCORS
 from app.auth.google import OpenIDGoogleProvider
 from app.config import Settings
+from app.context_library.api import router as context_router
+from app.context_library.service import ContextService
+from app.context_library.storage import LocalDocumentStorage
 from app.database import Database, PlatformError
 from app.errors import VisionError
 from app.middleware import VisionRequestBoundary, error_response
@@ -53,6 +56,9 @@ def create_app(
     app.state.database = database
     app.state.google_provider = OpenIDGoogleProvider(settings)
     app.state.settings = settings
+    app.state.context_service = ContextService(
+        database, LocalDocumentStorage(settings.context_storage_directory), settings
+    )
     app.state.vision_service = VisionService(provider or OpenAIVisionProvider(settings))
     app.state.answer_service = AnswerService(answer_provider or OpenAIAnswerProvider(settings))
     app.add_middleware(AuthBoundary)
@@ -86,6 +92,7 @@ def create_app(
     app.include_router(router)
     app.include_router(answer_router)
     app.include_router(auth_router)
+    app.include_router(context_router)
     return app
 
 
