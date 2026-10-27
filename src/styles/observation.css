@@ -1,0 +1,15 @@
+.observation-content { padding: var(--space-6); font-size: var(--text-sm); line-height: var(--line-body); overflow-wrap: anywhere; }
+.observation-content h3 { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 500; margin-block: var(--space-4); }
+.observation-content h4 { font-weight: 500; margin-block: var(--space-5) var(--space-3); }
+.observation-content p { color: var(--text-secondary); margin-block: var(--space-3); }
+.observation-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.observed-text { white-space: pre-wrap; }
+.observed-options { list-style: none; padding: 0; margin-block: var(--space-5); display: grid; gap: var(--space-3); }
+.observed-options li { display: flex; align-items: start; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); }
+.option-label { font-family: var(--font-mono); color: var(--text-secondary); flex-shrink: 0; min-width: 20px; }
+.observation-confidence { font-size: var(--text-xs); }
+.observation-warnings { border-left: 2px solid var(--border-strong); padding-left: var(--space-4); }
+.observation-warnings ul { list-style: disc; padding-left: var(--space-4); color: var(--text-secondary); }
+.observed-element { margin-top: var(--space-4); }
+.observed-element pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-xs); padding: var(--space-3); background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+@media (max-width: 950px) { .observation-content { padding: var(--space-5); } }

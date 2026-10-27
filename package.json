@@ -13,7 +13,11 @@
     "desktop:check": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/desktop.ps1 -Check",
     "setup:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup-rust.ps1",
     "lint": "eslint . --max-warnings 0",
-    "test:interaction": "node --test tests/*.test.mjs"
+    "test:interaction": "node --test tests/*.test.mjs",
+    "backend": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/backend.ps1",
+    "backend:test": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/backend.ps1 -Test",
+    "backend:lint": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/backend.ps1 -Lint",
+    "setup:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup-backend.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

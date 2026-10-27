@@ -4,10 +4,20 @@ import { createCaptureController } from '../capture/controller'
 import { nativeCapture } from '../capture/native'
 import { CaptureDialog } from './CaptureDialog'
 import { CapturePreview } from './CapturePreview'
+import { createObservationController } from '../vision/controller'
+import { readQuestion } from '../vision/client'
+import { QuestionObservationView } from './QuestionObservationView'
 
 export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange: (open: boolean) => void }) {
   const [controller] = useState(() => createCaptureController(nativeCapture))
   const capture = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const [observationController] = useState(() => createObservationController(readQuestion))
+  const observation = useSyncExternalStore(observationController.subscribe, observationController.getSnapshot)
+  useEffect(() => {
+    observationController.reset()
+    return () => observationController.reset()
+  }, [capture.result, observationController])
+  const readCapture = () => { if (capture.result) void observationController.read(capture.result) }
   const modalOpen = capture.phase === 'selecting' || capture.phase === 'capturing'
   useEffect(() => { onCaptureModalChange(modalOpen); return () => onCaptureModalChange(false) }, [modalOpen, onCaptureModalChange])
 
@@ -25,7 +35,7 @@ export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange
             <span>Analyze Question</span>
             <ArrowUpRight size={17} aria-hidden="true" />
           </button>
-          <p id="analysis-availability">Capture first. AI analysis comes later.</p>
+          <p id="analysis-availability">Capture first. Read the question next.</p>
         </div>
       </section>
 
@@ -37,7 +47,7 @@ export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange
             <h2 id="question-title"><span className="section-index" aria-hidden="true">01</span>Question</h2>
             <span className="state-label">{capture.result ? 'Captured' : 'Awaiting capture'}</span>
           </header>
-          {capture.result ? <CapturePreview result={capture.result} controller={controller} /> : <div className="question-empty">
+          {capture.result ? <CapturePreview result={capture.result} controller={controller} onRead={readCapture} reading={observation.phase === 'reading'} /> : <div className="question-empty">
             <span className="question-reticle" aria-hidden="true"><ScanLine size={26} strokeWidth={1} /></span>
             <h3>A question opens the way.</h3>
             <p>Your selected screen or window will appear here.</p>
@@ -45,20 +55,15 @@ export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange
           <div className="question-footnote"><span className="signal-dot" aria-hidden="true" />{capture.result ? 'Ephemeral capture · Not saved' : 'No capture selected'}</div>
         </section>
 
-        <section className="result-panel" aria-labelledby="answer-title">
+        <section className="result-panel" aria-labelledby="observation-title">
           <header className="section-heading">
-            <h2 id="answer-title"><span className="section-index" aria-hidden="true">02</span>Suggested answer</h2>
-            <span className="state-label">Empty</span>
+            <h2 id="observation-title"><span className="section-index" aria-hidden="true">02</span>Question observation</h2>
+            <span className="state-label">{observation.phase === 'ready' ? 'Read' : observation.phase === 'reading' ? 'Reading' : 'Not read'}</span>
           </header>
-          <div className="answer-empty">
-            <span className="answer-beam" aria-hidden="true" />
-            <span className="eyebrow">SPACE FOR UNDERSTANDING</span>
-            <h3>The answer is<br />only the beginning.</h3>
-            <p>A suggested answer will appear here.<br />The reasoning will follow.</p>
-          </div>
+          <QuestionObservationView state={observation} onRetry={readCapture} onCancel={() => observationController.reset()} />
           <section className="explanation-area" aria-labelledby="explanation-title">
-            <h2 id="explanation-title"><span className="section-index" aria-hidden="true">03</span>Explanation</h2>
-            <p>A concise explanation will help you understand why.</p>
+            <h2 id="explanation-title"><span className="section-index" aria-hidden="true">03</span>Answer generation</h2>
+            <p>SolveGuide does not yet determine or recommend the correct answer.</p>
           </section>
         </section>
 

@@ -33,7 +33,7 @@ export function CaptureDialog({ state, controller }: { state: CaptureState; cont
       </fieldset>}
       <div className="capture-actions"><button className="button" disabled={busy || state.loading} onClick={() => void controller.open()}>Refresh sources</button>
         <button className="button button-primary" disabled={!state.selected || busy || state.loading || state.kind === 'region'} onClick={() => void controller.capture()}>Capture {state.kind}</button></div>
-      <p className="capture-privacy">Screen capture briefly hides SolveGuide. Stays in memory on this device. Nothing is uploaded or saved. Protected content may appear blank. AI analysis is not connected.</p>
+      <p className="capture-privacy">Screen capture briefly hides SolveGuide. Stays in memory on this device. Capture does not upload or save images. Read Question later sends your chosen capture to OpenAI. Protected content may appear blank.</p>
     </div>
   </dialog>
 }

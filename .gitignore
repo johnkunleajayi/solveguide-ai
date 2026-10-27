@@ -13,3 +13,11 @@ src-tauri/gen/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Python backend (all environments/tool caches live under .tools/.cache)
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
