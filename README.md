@@ -7,6 +7,11 @@ backend and configured providers are available. Milestone 5 adds an explicit,
 structured educational recommendation from QuestionObservation. Vision extraction
 and answering remain separate operations; neither paid stage runs automatically.
 Recommendations and confidence are estimates, not guarantees of correctness.
+SolveGuide is a Windows **desktop product**. Milestone 8 requires Google sign-in
+for every core learning workflow; local privacy and appearance settings remain
+available before sign-in. There is no SolveGuide browser application. A future
+public website is for product information, downloads, documentation/support and
+possible account/commercial surfaces, not a duplicate learning app.
 Milestone 6 adds PostgreSQL-backed Google identity and server-side sessions around
 that pipeline. Signing in never saves captures, questions or answers.
 
@@ -75,18 +80,20 @@ Repair Rust, if necessary, with `npm.cmd run setup:rust`.
 ## Architecture: a modular monolith
 
 ```text
-Windows Graphics Capture / Direct3D11
+Authenticated desktop workspace
+  -> Windows Graphics Capture / Direct3D11
   -> Rust capture module -> typed CaptureResult -> React capture preview
-  -> explicit Read Question -> local FastAPI -> VisionService
+  -> explicit Read Question -> native session transport -> FastAPI current-user check -> VisionService
   -> VisionProvider -> OpenAIVisionProvider -> QuestionObservation -> desktop UI
-  -> explicit Get Suggested Answer -> AnswerService -> AnswerProvider
+  -> explicit Get Suggested Answer -> native session transport -> current-user check -> AnswerService -> AnswerProvider
   -> OpenAIAnswerProvider -> AnswerRecommendation -> suggested answer + explanation
 ```
 
-- `src/App.tsx`: shell, modal visibility, theme and pointer preferences.
+- `src/App.tsx`, `src/auth/context.tsx`, `AuthGate.tsx`: central auth boundary, shell,
+  modal visibility, theme and pointer preferences.
 - `src/capture/`: existing native capture contract, adapter and state machine.
-- `src/vision/`: observation types/runtime guard, HTTP client and cancellable state.
-- `src/answer/`: answer contract/runtime validation, text-only HTTP client, request state
+- `src/vision/`: observation types/runtime guard, native transport client and cancellable state.
+- `src/answer/`: answer contract/runtime validation, text-only native client, request state
   and synchronous capture/observation lifecycle invalidation.
 - `AnswerRecommendationView.tsx`: separate recommended options/response, explanation,
   answer confidence, warnings and explicit request/retry/cancel controls.
@@ -193,9 +200,11 @@ frontend also has a 110-second network limit and a visible manual Retry action.
 
 Development CORS allows only `http://127.0.0.1:1420` and the Windows Tauri origin
 `http://tauri.localhost`, without wildcard origins. Vision/answer CORS stays
-credential-free; only authentication routes allow credentialed cookie requests. Vision POSTs also
+without cookie credentials; desktop Rust attaches its opaque session credential to
+protected AI requests. Only authentication routes allow credentialed cookie requests. Vision POSTs also
 require a matching Origin; CORS alone is not authentication. Trusted hosts are
-loopback names plus the explicitly configured auth public host. The frontend endpoint is centralized in `src/vision/client.ts`.
+loopback names plus the explicitly configured auth public host. The fixed desktop
+AI endpoints are centralized in the native transport; React never receives credentials.
 Tauri CSP adds only `http://127.0.0.1:8000` to connect-src; no new native permissions
 or direct frontend-to-OpenAI connection is added by vision. Milestone 6 adds only
 native auth commands and the exact Google avatar image host. Vite watcher exclusions remain
@@ -234,7 +243,7 @@ Official references:
 Preserve the black-and-white Neutral Light identity: near-black/charcoal signature
 dark mode, independently designed off-white/ink light mode, persisted System mode.
 Tokens own colors, type, spacing, borders, focus, shadows and restrained luminous
-motion. System fonts and browser-only primitives remain reusable for a future web app.
+motion. System fonts and frontend primitives remain reusable within the desktop product.
 
 Pointer Light uses DOM refs/transforms and a bounded rAF loop, never React state
 per pointer move. It requires fine hover, preference on, no reduced motion and no
@@ -305,9 +314,9 @@ No uploads, parsing, retrieval, RAG, embeddings, vector storage or session workf
 is implemented. Future user-selected region capture belongs in Tauri/Rust. Ordinary
 screen-sharing privacy now uses supported native OS capture exclusion on Windows, never
 CSS tricks or anti-proctoring, monitoring/detection evasion or security circumvention.
-See Milestone 7 below for scope and limitations. The eventual web experience may reuse visual
-tokens, observation presentation and browser interaction primitives; no separate
-web application is created here.
+See Milestone 7 below for scope and limitations. Shared visual primitives may also
+support a future public distribution/support website; a browser learning app is
+not an upcoming product requirement.
 
 ### Previous milestone verification
 
@@ -544,9 +553,10 @@ issued, native cancellation attempts revocation and clears it locally. If the ba
 is unreachable, that orphan server record expires normally and its credential is
 not retained by the app. Failed logout does not falsely claim successful revocation.
 
-### Future web transport and endpoints
+### Retained cookie compatibility and endpoints
 
-The same user, session and Google services also support a web client. Web start sets
+The backend retains its original cookie transport without creating or planning a
+browser learning product. Its browser-oriented start sets
 a random browser-binding HttpOnly cookie; callback requires that same cookie in
 addition to state. Successful web login sets an opaque HttpOnly, SameSite=Lax cookie
 scoped to `/api`, with Secure mandatory for HTTPS configuration. Session expiry matches
@@ -557,8 +567,8 @@ separate web app, web redirect destination or second authentication system is cr
 | Endpoint | Access / behavior |
 | --- | --- |
 | GET /api/health | Public/local; safe configuration flags, no database ping |
-| POST /api/v1/vision/question | Existing explicit local/exact-origin image reading; no login required |
-| POST /api/v1/answer | Existing explicit local/exact-origin observation reasoning; no login required |
+| POST /api/v1/vision/question | Authenticated current user required before VisionProvider execution; exact origin and image bounds preserved |
+| POST /api/v1/answer | Authenticated current user required before AnswerProvider execution; observation-only input preserved |
 | GET /api/v1/auth/google/start | Web sign-in start; browser-binding cookie and Google redirect |
 | GET /api/v1/auth/google/callback | Google code/state callback, one-use and expiry validation |
 | POST /api/v1/auth/desktop/start | Exact-origin native transaction start; secret returned only to Rust |
@@ -587,8 +597,8 @@ AUTH_COOKIE_SECURE=false
 AUTH_SESSION_HOURS=168
 ```
 
-Blank database/Google/state-key values leave local AI functionality available and
-produce an actionable configuration error on sign-in. Health distinguishes database
+Blank database/Google/state-key values prevent sign-in/core access and
+produce actionable configuration errors. Local privacy/appearance settings remain available. Health distinguishes database
 configured and auth configured; these flags do not claim connectivity/schema readiness.
 Database failures map to safe not-configured, unavailable or schema-migration errors.
 Provider/state/session errors are sanitized; no raw exceptions/secret inputs are returned.
@@ -615,7 +625,7 @@ JavaScript origin is not needed for this server-side redirect flow. Put the clie
 and secret only in backend/.env. For a future hosted backend, configure its exact
 HTTPS callback separately and set AUTH_PUBLIC_BASE_URL and AUTH_COOKIE_SECURE=true.
 Hosted deployment also needs explicit client origins/CSRF rules, HTTPS/reverse-proxy
-and access controls for currently local/public AI endpoints; do not expose this
+and additional deployment/abuse controls beyond the now-mandatory AI authentication; do not expose this
 loopback development server publicly. Suppress callback query strings in proxy logs.
 
 From `D:\solveguide-ai`, install dependencies and generate a private encryption key
@@ -651,7 +661,7 @@ a dedicated disposable database. Without those variables it is skipped.
 
 Auth requests are bounded to 4 KiB, require exact allowed Origin and JSON on POST,
 and have explicit timeouts. Cookie credentials are allowed only on auth CORS routes,
-never wildcard origins. Vision/answer remain credential-free. No secret/token/query
+never wildcard origins. Vision/answer require sessions supplied only by native transport. No secret/token/query
 payload logging, SQL echo or provider token persistence. The only CSP image addition
 is `https://lh3.googleusercontent.com` for optional Google avatars, with no referrer.
 Pointer Light, focus, themes, capture and native watcher exclusions are preserved.
@@ -750,3 +760,75 @@ verification on the available machine**, including the capture application used.
 6. Explicitly turn privacy OFF; repeat that external capture and verify ordinary
    behavior. Restart SolveGuide and confirm OFF restored. Turn ON, restart again,
    verify ON restored, and leave ON as the final product preference.
+
+## Milestone 8: mandatory desktop authentication
+
+**No valid authentication means no core learning functionality.** `AuthProvider`
+owns one backend-derived auth controller shared by the app gate and Settings.
+Startup shows an intentional checking state, then either the focused Google sign-in
+shell or the existing authenticated workspace. Backend/configuration failures use
+an unavailable/error state with an explicit check/retry action; they are not treated
+as an ordinary signed-out result. No workspace is briefly mounted while checking.
+Google is the only sign-in method. Signing in while Settings is open updates that
+same shared state, revealing the existing workspace without a reload/restart.
+
+`required_current_user` protects both provider routes. Missing/invalid/expired/
+revoked sessions produce sanitized 401 errors and a Bearer authentication challenge
+before any provider invocation. Database failures fail closed too. Health, auth
+start/callback/exchange/cancel, and optional-session `/me` remain available as needed
+to establish identity; logout retains its existing revocation purpose. Host/origin
+and body limits supplement authorization, not replace it.
+
+Desktop session credentials remain **Rust-process memory only**. `/me` now checks
+backend availability even when native memory has no credential. `ai_request` accepts
+only a bounded payload and a vision/answer kind; fixed native endpoints attach the
+credential without returning it to React. `src/api/core.ts` provides cancellable IPC,
+not an arbitrary HTTP proxy. Native transport serializes AI work, supports request-ID
+cancellation and rejects replies across logout's session epoch. The backend remains
+authoritative for every paid request. Google flows, schemas and providers are unchanged.
+Full app restart still requires sign-in again; no browser/durable credential storage
+was added. Frontend-only previews do not become a browser product or bypass the gate.
+
+Normal product capture preflights the current identity at the TypeScript/native-client
+boundary before discovery/capture. The Windows capture engine itself stays independent
+of Google/PostgreSQL. The app rechecks auth on focus and once a minute while visible;
+protected request failures immediately close access. Backend outages fail closed and
+an explicit connection check can restore a still-valid native session after recovery.
+Native capture/AI replies already in flight cannot repopulate a closed workspace.
+
+Sign out immediately unmounts the workspace, clears capture/observation/recommendation
+controllers, aborts transport, clears native credentials and requests server revocation.
+Sign-in is blocked while logout is pending. If revocation cannot be confirmed, access
+stays closed and the UI explains that the remote session will expire normally.
+Cancelling transport cannot promise that a provider request already accepted avoids
+charges. No automatic provider retry was added.
+
+Settings remain available while signed out: Screen-share privacy, themes, Pointer
+Light and keyboard/accessibility behavior. Windows privacy remains active before
+and after authentication. Accounts persist identity/session metadata only; screenshots,
+questions, options, recommendations and explanations remain ephemeral. No telemetry,
+learning history or automatic uploads were added. No database migration is required;
+the schema remains `0001_auth`.
+
+Development/testing is currently free, with authentication mandatory. Monetization,
+subscriptions/plans/credits/quotas/payments and entitlement products are **not**
+implemented. A future policy can be inserted after `required_current_user` and before
+provider-backed service execution, without changing Google sign-in, capture or providers.
+
+### Manual Milestone 8 verification
+
+1. Start backend and desktop from the canonical workspace. A fresh desktop process
+   must show the auth shell, never Analyze Question or usable learning controls.
+2. Open Settings while signed out; verify privacy effective state, theme, Pointer
+   Light and keyboard focus. Do not disable privacy merely for testing convenience.
+3. Complete Google login yourself through the system browser. Return to SolveGuide;
+   verify the existing workspace appears without restarting, including if Settings
+   was open during sign-in.
+4. Explicitly capture a harmless Chrome practice question, Read Question and Get
+   Suggested Answer. Existing image/observation boundaries and cost disclosures apply.
+5. Sign out during an idle workspace or deliberate in-flight request. Workspace data
+   must disappear and late replies must not restore it. Sign in again; start fresh.
+6. Stop/restart only the local backend to inspect the unavailable state and explicit
+   retry. Unauthenticated API calls must return 401 without provider execution.
+7. Confirm privacy stays independently effective throughout. Real Google login and
+   native capture/AI interaction remain manual tests; automated provider tests are mocked.

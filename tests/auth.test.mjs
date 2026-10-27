@@ -13,7 +13,7 @@ function compile(path, dependencies = {}) {
 }
 const { createAuthController } = compile('auth/controller.ts')
 const { parseUser } = compile('auth/types.ts')
-const { AccountContent } = compile('components/AccountPanel.tsx', { '../auth/client': {}, '../auth/controller': { createAuthController } })
+const { AccountContent } = compile('components/AccountPanel.tsx', { '../auth/context': {} })
 const React = require('react')
 const { renderToStaticMarkup } = require('react-dom/server')
 const user = { id: 'user-id', email: 'learner@example.com', email_verified: true, display_name: 'Learner', avatar_url: null }
@@ -62,10 +62,10 @@ test('cancel clears polling and discards a late sign-in result', async () => {
   assert.equal(controller.getSnapshot().phase, 'signed_out'); assert.equal(controller.getSnapshot().user, null)
   assert.deepEqual(calls, ['start', 'cancel'])
 })
-test('logout failure does not falsely claim server session was revoked', async () => {
+test('logout failure keeps access closed without falsely claiming remote revocation', async () => {
   const { controller } = setup({ me: async () => user, logout: async () => { throw Error('offline') } })
   await controller.check(); await controller.signOut()
-  assert.equal(controller.getSnapshot().phase, 'error'); assert.deepEqual(controller.getSnapshot().user, user)
+  assert.equal(controller.getSnapshot().phase, 'unavailable'); assert.equal(controller.getSnapshot().user, null)
 })
 test('account UI renders semantic sign-in, cancel, user and sign-out states with escaped identity', () => {
   const render = state => renderToStaticMarkup(React.createElement(AccountContent, { state, onSignIn() {}, onSignOut() {}, onCancel() {}, onRefresh() {} }))

@@ -1,0 +1,8 @@
+.auth-app-shell { min-height: 100dvh; }
+.auth-app-shell .main-shell { margin: 0; }
+.sign-in-shell { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); align-items: center; gap: var(--space-16); min-height: 65dvh; padding-block: var(--space-12); }
+.sign-in-brand h1 { font-family: var(--font-display); font-size: clamp(2.25rem, 4vw, 4.25rem); font-weight: 500; line-height: 1.12; letter-spacing: var(--tracking-display); margin-block: var(--space-6); }
+.sign-in-brand > p { max-width: 42ch; line-height: var(--line-body); }
+.sign-in-card { min-width: 0; padding: var(--space-8); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface-gradient); }
+.sign-in-card .account-panel { border: 0; padding: 0; margin: 0 0 var(--space-6); }
+@media (max-width: 900px) { .sign-in-shell { grid-template-columns: minmax(0, 1fr); gap: var(--space-8); min-height: auto; } .sign-in-card { padding: var(--space-6); } }

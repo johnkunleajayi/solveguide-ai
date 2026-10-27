@@ -1,4 +1,4 @@
-/* SolveGuide / Neutral Light. Shared by desktop and future web UI. */
+/* SolveGuide / Neutral Light. Reusable desktop product design tokens. */
 :root {
   color-scheme: dark;
   --canvas: #090909;

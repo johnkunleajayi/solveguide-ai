@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from conftest import authorized_test_app
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -32,7 +33,8 @@ def test_health_has_no_secret():
 
 def test_missing_key_is_graceful(image_payload):
     client = TestClient(
-        create_app(Settings(_env_file=None, openai_api_key=None)), base_url="http://127.0.0.1"
+        authorized_test_app(create_app(Settings(_env_file=None, openai_api_key=None))),
+        base_url="http://127.0.0.1",
     )
     response = client.post(PATH, json=image_payload, headers={"Origin": "http://127.0.0.1:1420"})
     assert response.status_code == 503

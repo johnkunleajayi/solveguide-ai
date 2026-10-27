@@ -6,13 +6,15 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 7
+## Current scope: Milestone 8
 
 SolveGuide CAPTURES, UNDERSTANDS, RECOMMENDS and EXPLAINS for learning and authorized
 practice. Preserve working native capture and separate vision extraction. Answers
 require an explicit Get Suggested Answer action on a validated QuestionObservation;
 never combine capture/vision/recommendation into an uncontrolled paid prompt.
 Google OIDC and PostgreSQL/SQLAlchemy/Alembic now wrap the stable AI pipeline.
+SolveGuide is desktop-only; Google authentication is mandatory for all core learning
+actions. Local privacy/appearance Settings remain available without authentication.
 Region remains unavailable. Do not add learning history, Context
 Library, uploads, RAG, embeddings, vector search, Session Preparation, payments,
 analytics or automatic/continuous capture. Milestone 7 adds only supported native
@@ -78,7 +80,8 @@ host lh3.googleusercontent.com in CSP; no broad native opener permissions.
 Backend binds only 127.0.0.1. Exact POST origins are
 http://127.0.0.1:1420 and http://tauri.localhost; no wildcard credentials. These
 checks alone are not authentication. Only auth routes enable exact-origin cookie CORS;
-vision/answer remain credential-free and local/public. Public deployment/access
+vision/answer require current authenticated user and native-held session credentials.
+Browser cookie CORS remains separate. Public deployment/access
 controls remain future work.
 
 Use npm.cmd on Windows. See README for exact environment/install/start commands.
@@ -116,8 +119,8 @@ the default with selected materials while broader knowledge remains available;
 Materials Only must communicate insufficient support. Do not implement these yet.
 Future region capture stays native. Screen-share privacy now lives behind the
 Tauri/Rust boundary, not CSS. No anti-proctoring, monitoring/detection evasion or
-security circumvention. Keep tokens and browser primitives reusable for a future
-web application without creating a separate web app now.
+security circumvention. A future website is public presence/download/support,
+not a planned duplicate browser learning application. Do not build it in this task.
 
 ## Milestone 5 answer invariants
 
@@ -173,7 +176,7 @@ control and hand off exact native/live steps; never bypass the limitation.
 
 README contains the contract, supported types, privacy, cost controls and future
 selected-context boundary. Keep future Context Library/RAG/materials modes/session
-preparation documented only. Do not proceed beyond Milestone 7 or commit/push.
+preparation documented only. Do not proceed beyond Milestone 8 or commit/push.
 
 ## Milestone 6 platform invariants
 
@@ -204,18 +207,20 @@ Never return session/exchange secrets to React, accept arbitrary URLs, register
 custom URI handlers or place credentials in callback URLs. App restart signs out;
 durable native credential storage is deliberately absent. Do not alter capture module.
 
-Future web shares the same service and user/session tables. Web start/callback
+Existing cookie compatibility shares the same service and user/session tables; it
+does not imply a browser product requirement. Browser start/callback
 requires a browser-binding HttpOnly cookie. Session cookie is HttpOnly, SameSite=Lax,
 Path=/api and Secure for configured HTTPS. Exact Origin checks protect auth POSTs;
 4 KiB request bounds and explicit timeouts are mandatory. CORS is not authorization.
 Future owned resources must use required_current_user and server-derived user.id
 ownership queries; optional_current_user is for optional identity only. Existing
-vision/answer endpoints intentionally do not require sign-in in this milestone.
+vision/answer endpoints now require sign-in before any provider work.
 
 DATABASE_URL, GOOGLE_CLIENT_ID/SECRET, AUTH_STATE_ENCRYPTION_KEY and auth settings are
 backend-only. URL/keys use masked settings; never print real .env, raw SQL exceptions,
 provider tokens, session/exchange secrets or callback query strings. Logs stay
-allowlisted; SQL echo stays disabled. Missing config leaves local AI usable.
+allowlisted; SQL echo stays disabled. Missing config prevents core access while local
+privacy/appearance Settings remain usable.
 Health flags mean configured, not database connectivity or migrated schema readiness.
 
 Frontend `src/auth` has backend-derived checking/signed_out/signing_in/signed_in/error
@@ -261,3 +266,33 @@ SolveGuide capture. Actual monitor/external capture behavior needs visual manual
 verification; API readback and adapter tests do not prove universal capture exclusion.
 Keep exact Vite exclusions. No hooks/injection, process hiding, third-party control,
 anti-proctoring, monitoring evasion, DRM or guaranteed invisibility claims.
+
+## Milestone 8 mandatory access invariants
+
+The application has one AuthProvider/controller and central AuthGate. No authenticated
+workspace mounts until backend-derived signed_in state has a user. Settings and native
+privacy are independent of the gate. Distinguish checking, signed_out, signing_in,
+signing_out, signed_in, unavailable and error. No local login flags or browser storage
+credentials. Full desktop process restart intentionally requires sign-in again.
+
+Both provider routes use existing required_current_user; never bypass auth or execute
+a provider before it succeeds. Keep auth-start/callback/exchange and health usable for
+sign-in. Tests of provider contracts must opt into authenticated dependency overrides;
+access-enforcement tests must exercise actual session validation with no overrides.
+Test missing/invalid/expired/revoked sessions, outage and logout; assert zero provider calls.
+
+Native ai_request exposes only two fixed routes, bounded JSON and a request ID. Rust
+attaches its credential in memory; never return it to React or accept arbitrary URLs.
+Request cancellation and logout epoch guards discard stale replies. Native /me must
+check backend availability even with no stored token. Logout clears local credentials
+before network revocation; failure must keep UI locked and not claim remote success.
+
+Core capture preflight lives in the TypeScript client/gate; do not couple the Windows
+capture engine to PostgreSQL/Google. Unmount clears capture/observation/answer state
+and aborts provider transport; abandoned preflights cannot begin new capture. A fresh
+login gets a new workspace. Preserve all existing neutral observations, answer schemas,
+confidence semantics, privacy protections and explicit paid actions.
+
+No migration, history, telemetry, browser app, website or commercial features are added.
+Future entitlement policy may sit after authenticated-user validation and before
+provider services; documentation only, no speculative entitlement abstraction now.

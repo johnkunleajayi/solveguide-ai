@@ -1,7 +1,7 @@
 import type { CaptureResult } from '../capture/types'
 import { parseObservation, type VisionError } from './types'
+import { requestCore } from '../api/core'
 
-const ENDPOINT = 'http://127.0.0.1:8000/api/v1/vision/question'
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const messages: Record<string, string> = {
   provider_not_configured: 'Set OPENAI_API_KEY in backend/.env, then restart the backend.',
@@ -22,16 +22,10 @@ export async function readQuestion(capture: CaptureResult, signal: AbortSignal) 
   }
   const timeout = AbortSignal.timeout(110_000)
   try {
-    const response = await fetch(ENDPOINT, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ media_type: capture.format, image_base64: capture.imageBase64 }),
-      credentials: 'omit', cache: 'no-store', redirect: 'error', signal: AbortSignal.any([signal, timeout]),
-    })
-    const raw: unknown = await response.json()
+    const response = await requestCore('vision', { media_type: capture.format, image_base64: capture.imageBase64 }, AbortSignal.any([signal, timeout]))
+    const raw: unknown = response.data
     if (!response.ok) {
-      const code = typeof raw === 'object' && raw !== null && 'error' in raw
-        && typeof raw.error === 'object' && raw.error !== null && 'code' in raw.error
-        && typeof raw.error.code === 'string' ? raw.error.code : 'vision_unavailable'
+      const code = response.status === 401 ? (response.error?.code ?? 'sign_in_required') : response.error?.code ?? 'vision_unavailable'
       throw { code, message: messages[code] ?? 'Question reading is unavailable. Retake or retry.' } satisfies VisionError
     }
     return parseObservation(raw)

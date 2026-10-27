@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from conftest import authorized_test_app
 from fastapi.testclient import TestClient
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -15,22 +16,6 @@ from app.answer.service import AnswerService
 from app.config import Settings
 from app.main import create_app
 from app.schemas import QuestionObservation
-
-
-@pytest.fixture
-def answer_data():
-    return {
-        "status": "answered",
-        "question_type": "multiple_choice",
-        "selected_options": ["A"],
-        "answer_text": "A circle.",
-        "true_false_answer": None,
-        "code_answer": None,
-        "explanation": "The observed figure is round without corners.",
-        "key_points": [],
-        "confidence": 0.88,
-        "warnings": [],
-    }
 
 
 def run_service(observation_data, answer_data):
@@ -183,9 +168,11 @@ def test_inadequate_input_does_not_spend_credits(observation_data, patch, status
 
 def client(provider=None, configured=False):
     return TestClient(
-        create_app(
-            Settings(_env_file=None, openai_api_key="test-only" if configured else None),
-            answer_provider=provider,
+        authorized_test_app(
+            create_app(
+                Settings(_env_file=None, openai_api_key="test-only" if configured else None),
+                answer_provider=provider,
+            )
         ),
         base_url="http://127.0.0.1",
         headers={"Origin": "http://127.0.0.1:1420"},

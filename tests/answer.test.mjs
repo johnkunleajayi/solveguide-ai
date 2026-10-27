@@ -16,7 +16,8 @@ const { createAnswerController, connectAnswerLifecycle } = compile('answer/contr
 const captureTypes = compile('capture/types.ts')
 const { createCaptureController } = compile('capture/controller.ts', { './types': captureTypes })
 const { createObservationController } = compile('vision/controller.ts')
-const { getSuggestedAnswer } = compile('answer/client.ts', { './types': types })
+const transport = { requestCore: async () => { throw Error('Unexpected transport call') } }
+const { getSuggestedAnswer } = compile('answer/client.ts', { './types': types, '../api/core': transport })
 const observation = { status: 'detected', question_type: 'multiple_choice', question_text: 'Which figure is round?', options: [{ label: 'A', text: 'Circle' }, { label: 'B', text: 'Square' }], instructions: ['Choose one.'], required_selection_count: 1, visible_context: [], visual_elements: [], extraction_confidence: .95, warnings: [] }
 const result = { status: 'answered', question_type: 'multiple_choice', selected_options: ['A'], answer_text: 'A circle.', true_false_answer: null, code_answer: null, explanation: 'A circle has no corners.', key_points: [], confidence: .88, warnings: [] }
 const source = { id: 'screen', kind: 'screen', title: 'Display', width: 100, height: 100, x: 0, y: 0, primary: true }
@@ -69,20 +70,17 @@ test('runtime validation rejects label/count/type mismatch and duplicate selecti
   assert.equal(types.parseAnswer({ ...result, question_type: 'multiple_select', selected_options: ['A', 'B'] }, multi).selected_options.length, 2)
   assert.throws(() => types.parseAnswer({ ...result, question_type: 'multiple_select' }, multi))
 })
-test('text-only transport sends observation, not a capture, credentials or automatic follow-up', async t => {
+test('answer transport sends observation only through the native session boundary', async t => {
   let request
-  t.mock.method(globalThis, 'fetch', async (url, init) => { request = { url, init }; return { ok: true, json: async () => result } })
+  t.mock.method(transport, 'requestCore', async (kind, payload) => { request = { kind, payload }; return { ok: true, status: 200, data: result } })
   await getSuggestedAnswer(observation, new AbortController().signal)
-  assert.equal(request.url, 'http://127.0.0.1:8000/api/v1/answer')
-  assert.deepEqual(JSON.parse(request.init.body), observation)
-  assert.ok(!request.init.body.includes('image_base64'))
-  assert.equal(request.init.credentials, 'omit'); assert.equal(request.init.cache, 'no-store')
-  assert.equal('Authorization' in request.init.headers, false)
+  assert.deepEqual(request, { kind: 'answer', payload: observation })
+  assert.ok(!JSON.stringify(request).includes('image_base64'))
 })
 test('provider/network errors are safe and permit explicit retry', async t => {
-  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, json: async () => ({ error: { code: 'answer_authentication', message: 'secret upstream contents' } }) }))
+  t.mock.method(transport, 'requestCore', async () => ({ ok: false, status: 503, error: { code: 'answer_authentication', message: 'secret upstream contents' } }))
   await assert.rejects(getSuggestedAnswer(observation, new AbortController().signal), error => error.code === 'answer_authentication' && !error.message.includes('secret'))
-  globalThis.fetch.mock.mockImplementation(async () => { throw Error('network') })
+  transport.requestCore.mock.mockImplementation(async () => { throw Error('network') })
   await assert.rejects(getSuggestedAnswer(observation, new AbortController().signal), error => error.code === 'backend_unavailable')
 })
 function render(answer, question = observation, phase = 'ready') {

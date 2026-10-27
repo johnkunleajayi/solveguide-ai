@@ -1,5 +1,5 @@
 export interface AuthUser { id: string; email: string; email_verified: boolean; display_name: string; avatar_url: string | null }
-export interface AuthState { phase: 'checking' | 'signed_out' | 'signing_in' | 'signed_in' | 'error'; user: AuthUser | null; message: string | null }
+export interface AuthState { phase: 'checking' | 'signed_out' | 'signing_in' | 'signing_out' | 'signed_in' | 'unavailable' | 'error'; user: AuthUser | null; message: string | null }
 export interface AuthApi { me(): Promise<AuthUser | null>; start(): Promise<void>; poll(): Promise<AuthUser | null>; cancel(): Promise<void>; logout(): Promise<void> }
 export function parseUser(value: unknown): AuthUser | null {
   if (value === null) return null

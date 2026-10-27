@@ -9,11 +9,19 @@ const messages: Record<string, string> = {
   invalid_session: 'Please sign in again.',
   invalid_exchange: 'Sign-in expired. Start again.',
   google_sign_in_failed: 'Google sign-in was cancelled or could not be verified. Start again.',
+  sign_in_required: 'Sign in to use SolveGuide.',
+  backend_unavailable: 'The SolveGuide backend is unavailable. Check the connection and retry.',
+  desktop_required: 'Open the SolveGuide desktop application to sign in.',
 }
 function failure(error: unknown) {
   const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : ''
   return { code, message: messages[code] ?? 'Could not complete sign-in. Check the backend connection and try again.' }
 }
+export function accessFailure(error: unknown): boolean {
+  const { code } = failure(error)
+  return ['sign_in_required', 'session_expired', 'session_revoked', 'invalid_session', 'backend_unavailable', 'database_unavailable', 'database_schema', 'database_not_configured', 'desktop_required'].includes(code)
+}
+export function workspaceAllowed(state: AuthState): boolean { return state.phase === 'signed_in' && state.user !== null }
 export function createAuthController(api: AuthApi, schedule = (fn: () => void) => setTimeout(fn, 2000), unschedule = (id: ReturnType<typeof setTimeout>) => clearTimeout(id)) {
   let state: AuthState = { phase: 'checking', user: null, message: null }
   let generation = 0
@@ -25,13 +33,13 @@ export function createAuthController(api: AuthApi, schedule = (fn: () => void) =
     getSnapshot: () => state,
     subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn) } },
     async check() {
-      if (state.phase === 'signing_in') return
+      if (state.phase === 'signing_in' || state.phase === 'signing_out') return
       const current = ++generation
       try { const user = await api.me(); if (current === generation) publish({ phase: user ? 'signed_in' : 'signed_out', user, message: null }) }
-      catch (error) { if (current === generation) { const safe = failure(error); publish({ phase: ['invalid_session', 'session_expired', 'session_revoked'].includes(safe.code) ? 'signed_out' : 'error', user: null, message: safe.message }) } }
+      catch (error) { if (current === generation) { const safe = failure(error); publish({ phase: ['sign_in_required', 'invalid_session', 'session_expired', 'session_revoked'].includes(safe.code) ? 'signed_out' : 'unavailable', user: null, message: safe.message }) } }
     },
     async signIn() {
-      if (state.phase === 'signing_in' || state.user) return
+      if (state.phase === 'signing_in' || state.phase === 'signing_out' || state.user) return
       stop(); const current = generation; const deadline = Date.now() + 600_000
       publish({ phase: 'signing_in', user: null, message: null })
       const failed = (error: unknown) => { if (current === generation) publish({ phase: 'error', user: null, message: failure(error).message }) }
@@ -51,8 +59,15 @@ export function createAuthController(api: AuthApi, schedule = (fn: () => void) =
     async cancel() { stop(); publish({ phase: 'signed_out', user: null, message: null }); try { await api.cancel() } catch { /* Local state is already cleared. */ } },
     async signOut() {
       stop(); const current = generation
+      publish({ phase: 'signing_out', user: null, message: null })
       try { await api.logout(); if (current === generation) publish({ phase: 'signed_out', user: null, message: null }) }
-      catch (error) { if (current === generation) publish({ ...state, phase: 'error', message: failure(error).message }) }
+      catch { if (current === generation) publish({ phase: 'unavailable', user: null, message: 'Signed out on this device. Server revocation could not be confirmed; its session will expire normally. Check the backend connection.' }) }
+    },
+    invalidate(error: unknown) {
+      if (!accessFailure(error)) return
+      stop()
+      const safe = failure(error)
+      publish({ phase: ['sign_in_required', 'invalid_session', 'session_expired', 'session_revoked'].includes(safe.code) ? 'signed_out' : 'unavailable', user: null, message: safe.message })
     },
     dispose() { stop(); listeners.clear() },
   }

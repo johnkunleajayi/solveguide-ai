@@ -10,15 +10,25 @@ import { QuestionObservationView } from './QuestionObservationView'
 import { createAnswerController, connectAnswerLifecycle } from '../answer/controller'
 import { getSuggestedAnswer } from '../answer/client'
 import { AnswerRecommendationView } from './AnswerRecommendationView'
+import { useAuth } from '../auth/context'
+import { authApi } from '../auth/client'
+import { authenticatedCapture, connectWorkspaceAccess } from '../auth/workspace'
 
 export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange: (open: boolean) => void }) {
-  const [controller] = useState(() => createCaptureController(nativeCapture))
+  const { controller: auth } = useAuth()
+  const [protectedCapture] = useState(() => authenticatedCapture(nativeCapture, authApi, auth.invalidate))
+  const [controller] = useState(() => createCaptureController(protectedCapture))
   const capture = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const [observationController] = useState(() => createObservationController(readQuestion))
   const observation = useSyncExternalStore(observationController.subscribe, observationController.getSnapshot)
   const [answerController] = useState(() => createAnswerController(getSuggestedAnswer))
   const answer = useSyncExternalStore(answerController.subscribe, answerController.getSnapshot)
   useEffect(() => connectAnswerLifecycle(answerController, controller, observationController), [answerController, controller, observationController])
+  useEffect(() => {
+    protectedCapture.activate()
+    const disconnect = connectWorkspaceAccess(controller, observationController, answerController, auth.invalidate)
+    return () => { protectedCapture.close(); disconnect() }
+  }, [controller, observationController, answerController, auth, protectedCapture])
   const requestAnswer = () => { if (observation.observation) void answerController.request(observation.observation) }
   useEffect(() => {
     observationController.reset()

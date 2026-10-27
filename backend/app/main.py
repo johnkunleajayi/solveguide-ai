@@ -69,7 +69,10 @@ def create_app(
 
     @app.exception_handler(PlatformError)
     async def platform_error(_: Request, error: PlatformError) -> JSONResponse:
-        return error_response(error.code, error.message, error.status)
+        response = error_response(error.code, error.message, error.status)
+        if error.status == 401:
+            response.headers["WWW-Authenticate"] = "Bearer"
+        return response
 
     @app.exception_handler(AnswerError)
     async def answer_error(_: Request, error: AnswerError) -> JSONResponse:

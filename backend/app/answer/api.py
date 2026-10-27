@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from app.answer.errors import AnswerError
 from app.answer.schemas import AnswerRecommendation
 from app.answer.service import AnswerService
+from app.auth.dependencies import required_current_user
 from app.schemas import QuestionObservation
 
 router = APIRouter()
@@ -19,7 +20,11 @@ def get_answer_service(request: Request) -> AnswerService:
     return request.app.state.answer_service
 
 
-@router.post("/api/v1/answer", response_model=AnswerRecommendation)
+@router.post(
+    "/api/v1/answer",
+    response_model=AnswerRecommendation,
+    dependencies=[Depends(required_current_user)],
+)
 async def suggested_answer(
     observation: QuestionObservation, service: Annotated[AnswerService, Depends(get_answer_service)]
 ) -> AnswerRecommendation:

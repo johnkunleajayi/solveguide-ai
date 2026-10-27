@@ -13,7 +13,8 @@ function compile(path, dependencies = {}) {
 }
 const types = compile('vision/types.ts')
 const { createObservationController } = compile('vision/controller.ts')
-const { readQuestion } = compile('vision/client.ts', { './types': types })
+const transport = { requestCore: async () => { throw Error('Unexpected transport call') } }
+const { readQuestion } = compile('vision/client.ts', { './types': types, '../api/core': transport })
 const capture = { source: { id: 'source', kind: 'screen' }, width: 24, height: 16, format: 'image/png', capturedAt: 0, imageBase64: 'synthetic-fixture' }
 const observation = {
   status: 'detected', question_type: 'multiple_choice', question_text: 'Which symbol appears in the diagram?',
@@ -56,27 +57,24 @@ test('runtime boundary rejects malformed, extra-answer and inconsistent results'
   const empty = { ...observation, status: 'no_question', question_type: 'unknown', question_text: null, options: [], required_selection_count: null, warnings: ['No visible question.'] }
   assert.equal(types.parseObservation(empty).status, 'no_question')
 })
-test('transport sends only the capture image on request, without cookies, source titles or provider keys', async t => {
+test('vision transport sends only the PNG through the native session boundary', async t => {
   let request
-  t.mock.method(globalThis, 'fetch', async (url, init) => { request = { url, init }; return { ok: true, json: async () => observation } })
-  const result = await readQuestion(capture, new AbortController().signal)
-  assert.deepEqual(result, observation)
-  assert.equal(request.url, 'http://127.0.0.1:8000/api/v1/vision/question')
-  assert.deepEqual(JSON.parse(request.init.body), { media_type: 'image/png', image_base64: capture.imageBase64 })
-  assert.equal(request.init.credentials, 'omit'); assert.equal(request.init.cache, 'no-store'); assert.equal(request.init.redirect, 'error')
-  assert.equal('Authorization' in request.init.headers, false)
+  t.mock.method(transport, 'requestCore', async (kind, payload) => { request = { kind, payload }; return { ok: true, status: 200, data: observation } })
+  assert.deepEqual(await readQuestion(capture, new AbortController().signal), observation)
+  assert.deepEqual(request, { kind: 'vision', payload: { media_type: 'image/png', image_base64: capture.imageBase64 } })
 })
 test('backend errors and network failures are user friendly and sanitized', async t => {
-  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, json: async () => ({ error: { code: 'provider_authentication', message: 'private provider internals' } }) }))
+  t.mock.method(transport, 'requestCore', async () => ({ ok: false, status: 503, error: { code: 'provider_authentication', message: 'private provider internals' } }))
   await assert.rejects(readQuestion(capture, new AbortController().signal), error => error.code === 'provider_authentication' && !error.message.includes('private'))
-  globalThis.fetch.mock.mockImplementation(async () => { throw new TypeError('connection failed') })
+  transport.requestCore.mock.mockImplementation(async () => { throw Error('offline') })
   await assert.rejects(readQuestion(capture, new AbortController().signal), error => error.code === 'backend_unavailable')
 })
-test('oversized captures fail before network transmission', async t => {
-  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw Error('must not call') })
+test('oversized captures fail before native transmission', async t => {
+  const send = t.mock.method(transport, 'requestCore', async () => { throw Error('must not call') })
   await assert.rejects(readQuestion({ ...capture, imageBase64: 'x'.repeat(14 * 1024 * 1024) }, new AbortController().signal), error => error.code === 'image_too_large')
-  assert.equal(fetch.mock.callCount(), 0)
+  assert.equal(send.mock.callCount(), 0)
 })
+
 test('observation presentation preserves options/code and escapes untrusted text without answer highlights', () => {
   const { QuestionObservationView } = compile('components/QuestionObservationView.tsx')
   const React = require('react'); const { renderToStaticMarkup } = require('react-dom/server')

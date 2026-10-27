@@ -14,6 +14,8 @@ pub fn run() {
             auth::auth_poll,
             auth::auth_cancel,
             auth::auth_logout,
+            auth::ai_request,
+            auth::ai_cancel,
             privacy::privacy_get_state,
             privacy::privacy_set_enabled
         ])

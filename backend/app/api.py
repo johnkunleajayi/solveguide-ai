@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
+from app.auth.dependencies import required_current_user
 from app.errors import VisionError
 from app.images import validate_image
 from app.schemas import QuestionObservation, VisionRequest
@@ -33,7 +34,11 @@ async def health(request: Request) -> dict:
     }
 
 
-@router.post("/api/v1/vision/question", response_model=QuestionObservation)
+@router.post(
+    "/api/v1/vision/question",
+    response_model=QuestionObservation,
+    dependencies=[Depends(required_current_user)],
+)
 async def observe_question(
     payload: VisionRequest, service: Annotated[VisionService, Depends(get_service)]
 ) -> QuestionObservation:
