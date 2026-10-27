@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Check, Monitor, Moon, Sun, X } from 'lucide-react'
 import type { Theme } from '../hooks/useTheme'
+import { AccountPanel } from './AccountPanel'
 
 interface Props {
   open: boolean
@@ -35,6 +36,7 @@ export function SettingsDialog({ open, onClose, theme, setTheme, pointerLight, s
           <button className="icon-button" aria-label="Close settings" onClick={onClose}><X size={19} aria-hidden="true" /></button>
         </header>
         <p id="settings-description" className="muted">A little less distraction. A little more focus.</p>
+        <AccountPanel />
         <fieldset className="appearance-fieldset">
           <legend>Appearance</legend>
           <div className="theme-options">

@@ -7,6 +7,8 @@ backend and configured providers are available. Milestone 5 adds an explicit,
 structured educational recommendation from QuestionObservation. Vision extraction
 and answering remain separate operations; neither paid stage runs automatically.
 Recommendations and confidence are estimates, not guarantees of correctness.
+Milestone 6 adds PostgreSQL-backed Google identity and server-side sessions around
+that pipeline. Signing in never saves captures, questions or answers.
 
 ## Canonical workspace
 
@@ -104,7 +106,8 @@ Windows Graphics Capture / Direct3D11
 The provider contracts support future alternatives without coupling routes or React
 to OpenAI. Only OpenAI is implemented. `backend/app/answer/` contains separate
 schemas, provider protocol, centralized prompt, OpenAI adapter, deterministic service
-and API route. No database, microservice, OCR engine, retrieval, authentication,
+and API route. No microservice, OCR engine or retrieval is introduced by vision;
+authentication/database infrastructure is described in Milestone 6 below. No
 Context Library or history is implemented.
 
 ## Capture and Read Question
@@ -189,11 +192,13 @@ wall-clock deadline and explicit connection/network timeouts bound requests; the
 frontend also has a 110-second network limit and a visible manual Retry action.
 
 Development CORS allows only `http://127.0.0.1:1420` and the Windows Tauri origin
-`http://tauri.localhost`, without credentials or wildcard origins. Vision POSTs also
+`http://tauri.localhost`, without wildcard origins. Vision/answer CORS stays
+credential-free; only authentication routes allow credentialed cookie requests. Vision POSTs also
 require a matching Origin; CORS alone is not authentication. Trusted hosts are
-loopback names. The frontend endpoint is centralized in `src/vision/client.ts`.
+loopback names plus the explicitly configured auth public host. The frontend endpoint is centralized in `src/vision/client.ts`.
 Tauri CSP adds only `http://127.0.0.1:8000` to connect-src; no new native permissions
-or direct frontend-to-OpenAI connection is added. Vite watcher exclusions remain
+or direct frontend-to-OpenAI connection is added by vision. Milestone 6 adds only
+native auth commands and the exact Google avatar image host. Vite watcher exclusions remain
 unchanged for `src-tauri`, `.tools` and `.cache`.
 
 This is a local development backend, not a public production deployment. Do not
@@ -442,8 +447,9 @@ Missing credentials, authentication/quota/connectivity/timeouts, malformed outpu
 selection errors use safe structured errors. No key is hard-coded or bundled into
 React/Rust. Images are not resent for answers, and neither question nor answer payloads
 are logged. Answer logs contain only event/request ID, outcome and duration. Keep
-`store=False`; existing provider-retention caveats still apply. No database/history,
-authentication, Context Library, RAG, uploads, region capture or analytics is introduced.
+`store=False`; existing provider-retention caveats still apply. Milestone 5 introduced
+no persistence/authentication. Milestone 6 stores identity/session metadata only;
+Context Library, RAG, uploads, region capture, analytics and question/answer history remain absent.
 
 ### Controlled live reasoning check and manual fallback
 
@@ -470,3 +476,194 @@ UI check pending for the user rather than reporting mocked tests as live success
 Future selected-context input belongs beside QuestionObservation at the service boundary;
 Context Library, RAG, Context Guided/Materials Only modes and Session Preparation remain
 unimplemented, as described above.
+
+## Milestone 6: authenticated platform foundation
+
+The user's stable baseline `cdc54ca` includes manually validated Milestones 3–5.
+Milestone 6 adds shared identity/session infrastructure, not saved learning content.
+Google/Neon live setup and real login require your configuration and manual verification.
+
+### Modules and database
+
+`app/database.py` owns SQLAlchemy 2 async engine/session creation, a declarative base,
+bounded connection pool, transaction dependency and sanitized database errors.
+It uses Psycopg 3 async with PostgreSQL; a normal `postgresql://` or
+`postgresql+psycopg://` URL works, including Neon. URL credentials use SecretStr.
+`app/runtime.py` explicitly selects a selector event loop on Windows because Psycopg
+async cannot use Windows' default proactor loop. Both the backend script and Alembic
+use this loop factory. Pool resources close at application shutdown. Request
+transactions commit on success, roll back on failure and release their connections.
+No startup `create_all()` or SQLite fallback exists.
+
+`app/auth/` separates models, public schemas, randomness/hash helpers, Google OIDC
+adapter, session/OAuth services, current-user dependencies, HTTP boundaries and routes.
+Only three tables exist:
+
+| Table | Purpose and constraints |
+| --- | --- |
+| users | Internal UUID; unique Google subject; normalized, indexed email; verified flag; display name; optional avatar; timezone-aware created/updated/last-login timestamps |
+| auth_sessions | UUID; cascading user FK; unique SHA-256 credential hash; created/expiry/last-seen/revocation timestamps; positive-lifetime constraint |
+| oauth_attempts | Short-lived state/binding hashes; nonce; encrypted PKCE verifier; desktop/web transport; bounded lifecycle; optional user FK; expiry index |
+
+Google subject is the identity key. Email is not an account-linking key and is not
+globally unique. A PostgreSQL upsert handles concurrent logins for the same subject.
+Sessions contain 32 random bytes encoded as opaque URL-safe credentials. Only their
+SHA-256 hashes enter PostgreSQL; high-entropy secrets are not passwords and need no
+password hash. Sessions expire after 168 hours by default (configurable 1–720 hours),
+support revocation/logout and update last-seen on authenticated lookup. Google access,
+refresh and ID tokens are never stored. Expired OAuth rows are pruned on later starts;
+the verifier is cleared on completion/failure/cancellation. A maintenance retention
+policy for expired auth records can be added when deployment requirements are known.
+
+### Google flow and desktop transport
+
+1. The explicit Settings **Sign in with Google** action invokes the main-window-only
+   native auth command. Rust requests a short-lived transaction from the backend.
+2. Backend generates independent random state, nonce, PKCE verifier and exchange
+   binding; stores state/binding hashes and a Fernet-encrypted verifier for ten minutes.
+3. Rust retains the exchange secret in memory and opens only the allowlisted Google
+   HTTPS authorization endpoint using Windows' normal browser. No embedded Google login.
+4. Google returns an authorization code to the exact configured backend callback.
+   State is claimed under a PostgreSQL row lock and committed before token exchange,
+   preventing replay even if the provider fails. The backend redeems with PKCE.
+5. Authlib/joserfc verify the RS256 signature using Google's fixed JWKS endpoint,
+   issuer, audience, expiry/issued-at, nonce and applicable OIDC claims. Unverified
+   email is rejected. Identity is derived from the verified token, never frontend fields.
+6. Callback records a ready transaction without putting a session credential in a URL.
+   The native app polls at two-second intervals while signing in, for at most ten minutes.
+   A one-time exchange under a row lock issues a server-side session. Replays fail.
+7. Rust keeps the opaque session only in process memory and attaches it to fixed
+   loopback auth requests. React receives only public user DTOs. No auth data enters
+   localStorage, WebView storage, source files or the OS credential store.
+
+Desktop sign-in deliberately lasts only for the app process: reopening requires
+sign-in again. This avoids introducing durable credential storage in this milestone.
+There are no custom URI registrations, open redirect targets or arbitrary native URLs.
+Cancel invalidates the attempt; late client replies are ignored. If a session was just
+issued, native cancellation attempts revocation and clears it locally. If the backend
+is unreachable, that orphan server record expires normally and its credential is
+not retained by the app. Failed logout does not falsely claim successful revocation.
+
+### Future web transport and endpoints
+
+The same user, session and Google services also support a web client. Web start sets
+a random browser-binding HttpOnly cookie; callback requires that same cookie in
+addition to state. Successful web login sets an opaque HttpOnly, SameSite=Lax cookie
+scoped to `/api`, with Secure mandatory for HTTPS configuration. Session expiry matches
+the server lifetime. Logout revokes the server session and removes its cookie.
+The callback shows a fixed confirmation page; return to the client manually. No
+separate web app, web redirect destination or second authentication system is created.
+
+| Endpoint | Access / behavior |
+| --- | --- |
+| GET /api/health | Public/local; safe configuration flags, no database ping |
+| POST /api/v1/vision/question | Existing explicit local/exact-origin image reading; no login required |
+| POST /api/v1/answer | Existing explicit local/exact-origin observation reasoning; no login required |
+| GET /api/v1/auth/google/start | Web sign-in start; browser-binding cookie and Google redirect |
+| GET /api/v1/auth/google/callback | Google code/state callback, one-use and expiry validation |
+| POST /api/v1/auth/desktop/start | Exact-origin native transaction start; secret returned only to Rust |
+| POST /api/v1/auth/desktop/exchange | Exact-origin one-time exchange; requires private binding secret |
+| POST /api/v1/auth/desktop/cancel | Exact-origin cancellation; requires private binding secret |
+| GET /api/v1/auth/me | Optional session; public DTO or null; invalid/expired/revoked session gives safe 401 |
+| POST /api/v1/auth/logout | Exact-origin server revocation and cookie removal; no-session logout is safe |
+
+Public user DTO: id, email, email_verified, display_name, avatar_url. No Google subject,
+hashes, provider credentials or database details. `optional_current_user` and
+`required_current_user` are reusable dependencies. Future user-owned Context Library
+and Session Preparation must use required authentication and server-side `user.id`
+ownership filters; never trust a client-supplied owner ID. They are not implemented.
+
+### Configuration and exact setup
+
+Add these **backend-only** variables to your ignored `backend/.env`, preserving OpenAI settings:
+
+```dotenv
+DATABASE_URL=postgresql://YOUR_ROLE:URL_ENCODED_PASSWORD@YOUR_HOST/YOUR_DATABASE?sslmode=verify-full
+GOOGLE_CLIENT_ID=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=YOUR_GOOGLE_CLIENT_SECRET
+AUTH_STATE_ENCRYPTION_KEY=YOUR_LOCALLY_GENERATED_FERNET_KEY
+AUTH_PUBLIC_BASE_URL=http://127.0.0.1:8000
+AUTH_COOKIE_SECURE=false
+AUTH_SESSION_HOURS=168
+```
+
+Blank database/Google/state-key values leave local AI functionality available and
+produce an actionable configuration error on sign-in. Health distinguishes database
+configured and auth configured; these flags do not claim connectivity/schema readiness.
+Database failures map to safe not-configured, unavailable or schema-migration errors.
+Provider/state/session errors are sanitized; no raw exceptions/secret inputs are returned.
+
+**Neon:** create a PostgreSQL project and development branch, database `solveguide`
+and dedicated role. Copy its **direct** connection string into DATABASE_URL; use TLS
+(`sslmode=verify-full` recommended) and URL-encode password characters. Normal
+PostgreSQL elsewhere works too. Use a distinct disposable branch/database for optional
+destructive integration tests. Never run downgrade against a database containing
+accounts you need. No external infrastructure was created by this implementation.
+
+**Google Cloud:** create/select a project; configure Google Auth Platform Branding,
+Audience (External/testing with your test email, or your organization's Internal
+audience) and Data Access for `openid`, `email`, `profile`. Create an OAuth client of
+type **Web application**, because the backend redeems the code. Add this exact
+authorized redirect URI:
+
+```text
+http://127.0.0.1:8000/api/v1/auth/google/callback
+```
+
+Do not substitute localhost, a Vite URL, the Tauri origin or a custom scheme. A
+JavaScript origin is not needed for this server-side redirect flow. Put the client ID
+and secret only in backend/.env. For a future hosted backend, configure its exact
+HTTPS callback separately and set AUTH_PUBLIC_BASE_URL and AUTH_COOKIE_SECURE=true.
+Hosted deployment also needs explicit client origins/CSRF rules, HTTPS/reverse-proxy
+and access controls for currently local/public AI endpoints; do not expose this
+loopback development server publicly. Suppress callback query strings in proxy logs.
+
+From `D:\solveguide-ai`, install dependencies and generate a private encryption key
+locally (copy the generated value into backend/.env; never send it in chat):
+
+```powershell
+npm.cmd run setup:backend
+& .tools/python/Scripts/python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+$env:PYTHONPYCACHEPREFIX = 'D:\solveguide-ai\.cache\pycache'
+& .tools/python/Scripts/python.exe -m alembic -c backend/alembic.ini upgrade head
+& .tools/python/Scripts/python.exe -m alembic -c backend/alembic.ini current
+npm.cmd run backend
+# Separate terminal, same workspace:
+npm.cmd run desktop
+```
+
+Alembic is the only schema mechanism. `backend/migrations/versions/0001_auth_foundation.py`
+has explicit upgrade/downgrade operations and named constraints/indexes. To validate
+offline: `& .tools/python/Scripts/python.exe -m alembic -c backend/alembic.ini upgrade head --sql`.
+On a **disposable development database only**, downgrade with `alembic -c backend/alembic.ini
+downgrade base`, then upgrade head again. Use the project Python (`-m alembic`) for
+each command. `alembic check` reviews metadata consistency after a real migration.
+
+### Validation, security and manual login check
+
+Normal tests use mocked Google transport/identities, locally signed test JWTs,
+service-boundary database fakes and PostgreSQL-dialect migration rendering. They
+never contact Google or depend on Neon and do not claim real PostgreSQL concurrency
+or live OAuth proof. The opt-in `test_real_postgresql_roundtrip_and_constraints`
+requires both TEST_DATABASE_URL and ALLOW_TEST_DATABASE_RESET=1; it checks actual
+upgrade, metadata consistency, constraints, downgrade and upgrade back to head on
+a dedicated disposable database. Without those variables it is skipped.
+
+Auth requests are bounded to 4 KiB, require exact allowed Origin and JSON on POST,
+and have explicit timeouts. Cookie credentials are allowed only on auth CORS routes,
+never wildcard origins. Vision/answer remain credential-free. No secret/token/query
+payload logging, SQL echo or provider token persistence. The only CSP image addition
+is `https://lh3.googleusercontent.com` for optional Google avatars, with no referrer.
+Pointer Light, focus, themes, capture and native watcher exclusions are preserved.
+
+After configuration/migration, restart backend and desktop. Open Settings, select
+Sign in with Google, complete Google's login **yourself** in the system browser and
+return to SolveGuide. Verify display name/email/avatar, then Sign out and confirm
+signed-out state. Repeat manually if needed to verify an existing account reuses
+the user row. Check browser denial/cancel and app Cancel sign-in; no error should
+break capture/read/recommend. Real Google login is intentionally a joint manual test.
+
+Accounts persist identity/session metadata **only**. Captures still live in memory;
+Read Question explicitly sends an image to OpenAI, while Get Suggested Answer sends
+only QuestionObservation. No capture/question/answer history, uploads, Context Library,
+RAG, quotas, billing or capture exclusion is introduced.

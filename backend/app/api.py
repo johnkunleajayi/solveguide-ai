@@ -28,6 +28,8 @@ async def health(request: Request) -> dict:
             "provider": "openai",
             "configured": request.app.state.settings.provider_configured,
         },
+        "database": {"configured": request.app.state.settings.database_configured},
+        "authentication": {"configured": request.app.state.settings.auth_configured},
     }
 
 

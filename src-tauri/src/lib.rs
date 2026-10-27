@@ -1,10 +1,17 @@
+mod auth;
 mod capture;
 pub fn run() {
     tauri::Builder::default()
+        .manage(auth::AuthState::default())
         .manage(std::sync::Arc::new(capture::CaptureState::default()))
         .invoke_handler(tauri::generate_handler![
             capture::list_capture_sources,
-            capture::capture_source
+            capture::capture_source,
+            auth::auth_start,
+            auth::auth_me,
+            auth::auth_poll,
+            auth::auth_cancel,
+            auth::auth_logout
         ])
         .setup(|app| {
             // Keep the WebView profile and local appearance storage in the official workspace.

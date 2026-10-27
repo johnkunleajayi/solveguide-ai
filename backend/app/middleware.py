@@ -25,6 +25,9 @@ class VisionRequestBoundary:
         async def no_store(message: Message) -> None:
             if message["type"] == "http.response.start":
                 message["headers"] = [*message.get("headers", []), (b"cache-control", b"no-store")]
+                message["headers"].extend(
+                    [(b"referrer-policy", b"no-referrer"), (b"x-content-type-options", b"nosniff")]
+                )
             await send(message)
 
         if scope["method"] != "POST" or scope["path"] not in (

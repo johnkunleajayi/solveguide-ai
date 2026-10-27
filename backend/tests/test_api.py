@@ -24,6 +24,8 @@ def test_health_has_no_secret():
     assert response.json() == {
         "status": "ok",
         "vision": {"provider": "openai", "configured": False},
+        "database": {"configured": False},
+        "authentication": {"configured": False},
     }
     assert response.headers["cache-control"] == "no-store"
 

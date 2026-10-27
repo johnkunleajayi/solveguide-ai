@@ -20,6 +20,6 @@ if ($Test) {
   if ($LASTEXITCODE -eq 0) { & $python -m ruff format --check . }
 } else {
   # Loopback only. No access log or request payload logging.
-  & $python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
+  & $python -m app.runtime
 }
 exit $LASTEXITCODE
