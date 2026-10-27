@@ -2,6 +2,7 @@ import type { QuestionObservation } from '../vision/types'
 import type { CaptureController } from '../capture/controller'
 import type { createObservationController } from '../vision/controller'
 import type { AnswerApi, AnswerError, AnswerRecommendation } from './types'
+import type { ReasoningOptions } from '../rag/types'
 export interface AnswerState { phase: 'idle' | 'loading' | 'ready' | 'error'; result: AnswerRecommendation | null; error: AnswerError | null }
 export function createAnswerController(api: AnswerApi) {
   let state: AnswerState = { phase: 'idle', result: null, error: null }
@@ -13,13 +14,13 @@ export function createAnswerController(api: AnswerApi) {
     getSnapshot: () => state,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
     reset() { ++generation; pending?.abort(); pending = null; update({ phase: 'idle', result: null, error: null }) },
-    async request(observation: QuestionObservation) {
+    async request(observation: QuestionObservation, options?: ReasoningOptions) {
       if (state.phase === 'loading') return
       const current = ++generation
       pending = new AbortController()
       update({ phase: 'loading', result: null, error: null })
       try {
-        const result = await api(observation, pending.signal)
+        const result = await api(observation, pending.signal, options)
         if (current === generation) update({ phase: 'ready', result, error: null })
       } catch (error) {
         if (current !== generation) return

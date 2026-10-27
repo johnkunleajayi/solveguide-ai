@@ -1,6 +1,6 @@
 import type { QuestionObservation } from '../vision/types'
 import type { AnswerState } from '../answer/controller'
-export function AnswerRecommendationView({ state, observation, onRequest, onCancel, enabled }: { state: AnswerState; observation: QuestionObservation | null; onRequest: () => void; onCancel: () => void; enabled: boolean }) {
+export function AnswerRecommendationView({ state, observation, onRequest, onCancel, enabled, onOpenDocument }: { state: AnswerState; observation: QuestionObservation | null; onRequest: () => void; onCancel: () => void; enabled: boolean; onOpenDocument?: (id: string) => void }) {
   const answer = state.result
   const abstained = answer?.status === 'insufficient_information' || answer?.status === 'unsupported'
   return <section className="recommendation-area" aria-labelledby="recommendation-title">
@@ -17,10 +17,11 @@ export function AnswerRecommendationView({ state, observation, onRequest, onCanc
         {answer.code_answer && <pre className="answer-code" aria-label={`Suggested ${answer.code_answer.language ?? ''} code`}><code>{answer.code_answer.code}</code></pre>}
         <div className="recommendation-explanation"><h3>{abstained ? 'What to review' : answer.question_type === 'mathematics' ? 'Explanation / key steps' : 'Why'}</h3><p>{answer.explanation}</p>{answer.key_points.length > 0 && <ol>{answer.key_points.map((point, i) => <li key={i}>{point}</li>)}</ol>}</div>
         {!abstained && <p className="answer-confidence">Answer confidence · {Math.round(answer.confidence * 100)}%</p>}
+        {answer.grounding && <section className="grounding-sources" aria-label="Evidence and sources"><h3>{answer.grounding.grounding_status === 'insufficient_evidence' ? 'Insufficient document evidence' : 'Document support'}</h3><p className="capture-privacy">{answer.grounding.reasoning_mode.replace('_', ' ')} · {answer.grounding.retrieval_method === 'lexical' ? 'Lexical retrieval' : answer.grounding.retrieval_method === 'semantic_pgvector' ? 'Semantic retrieval' : 'No retrieval performed'}. Source support is checked, but model-based verification is not a guarantee of correctness.</p>{answer.grounding.citations.map(c => <details key={c.chunk_id}><summary>{c.document_title}{c.page_number !== null ? ` · Page ${c.page_number}` : ` · ${c.location}`}</summary><blockquote>{c.excerpt}</blockquote><p className="capture-privacy">Supports: {c.supports.join(', ')} · {c.location}</p><button className="button" onClick={() => onOpenDocument?.(c.document_id)}>Open source document</button></details>)}{answer.grounding.general_reasoning.length > 0 && <div><h4>General model reasoning · not document evidence</h4><ul>{answer.grounding.general_reasoning.map((point, i) => <li key={i}>{point}</li>)}</ul></div>}</section>}
         {answer.warnings.length > 0 && <section className="observation-warnings" aria-label="Answer warnings"><h4>Review notes</h4><ul>{answer.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul></section>}
       </>}
       {state.phase !== 'loading' && <button className="button button-primary" disabled={!enabled} onClick={onRequest}>{state.phase === 'idle' ? 'Get Suggested Answer' : 'Try Again'}</button>}
-      <p className="capture-privacy">Each request sends the structured observation to the answer provider and may incur API charges. Answer confidence is separate from reading confidence; both are estimates.</p>
+      <p className="capture-privacy">Each request sends the structured observation to the answer provider and may incur API charges. Grounded requests also send selected relevant passages after consent. Answer confidence is separate from reading confidence; both are estimates.</p>
     </div>
   </section>
 }

@@ -6,7 +6,7 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 9
+## Current scope: Milestone 10
 
 SolveGuide CAPTURES, UNDERSTANDS, RECOMMENDS and EXPLAINS for learning and authorized
 practice. Preserve working native capture and separate vision extraction. Answers
@@ -17,7 +17,7 @@ SolveGuide is desktop-only; Google authentication is mandatory for all core lear
 actions. Local privacy/appearance Settings remain available without authentication.
 Region remains unavailable. Milestone 9 adds only authenticated PDF/DOCX/TXT and
 pasted-text Context Library management. Do not add learning history,
-RAG, embeddings, vector search, Session Preparation, payments,
+Session Preparation, payments,
 analytics or automatic/continuous capture. Milestone 7 adds only supported native
 capture protection for SolveGuide's own main window.
 
@@ -119,7 +119,8 @@ Session Preparation (work description, material selection/review, reasoning mode
 begin), GENERAL / CONTEXT GUIDED / MATERIALS ONLY modes. Context Guided should be
 the default with selected materials while broader knowledge remains available;
 Materials Only must communicate insufficient support. Reasoning modes and Session
-Preparation remain documentation-only; do not use library text in answers yet.
+Preparation remains documentation-only. Milestone 10 implements explicit selected-document
+reasoning modes and retrieval after consent; never use materials in General mode.
 Future region capture stays native. Screen-share privacy now lives behind the
 Tauri/Rust boundary, not CSS. No anti-proctoring, monitoring/detection evasion or
 security circumvention. A future website is public presence/download/support,
@@ -178,8 +179,8 @@ answer quality. If a browser URL cannot be verified by Computer Use, stop browse
 control and hand off exact native/live steps; never bypass the limitation.
 
 README contains the contract, supported types, privacy, cost controls and future
-selected-context boundary. Context Library management is now implemented separately; keep RAG/materials modes/session
-preparation documented only. Do not proceed beyond Milestone 9 or commit/push.
+selected-context boundary. Context Library management is now implemented separately; implement RAG/materials modes only within Milestone 10; keep session preparation
+documented only. Do not proceed beyond Milestone 10 or commit/push.
 
 ## Milestone 6 platform invariants
 
@@ -308,8 +309,7 @@ All document queries include authenticated owner identity; never fetch by UUID
 then trust React to filter. Unknown and cross-owner resources both return 404.
 `context_documents` is the only new table, via Alembic `0002_context_library`.
 Never modify applied `0001_auth` or call create_all(). Preserve PostgreSQL JSONB,
-UUID/timezone timestamps, owner FK and named constraints/index. No future RAG,
-session preparation, histories or billing tables.
+UUID/timezone timestamps, owner FK and named constraints/index. Milestone 10 adds only derived index/chunk tables. No session preparation, histories or billing tables.
 
 DocumentStorage is replaceable. Development LocalDocumentStorage defaults to
 D:\solveguide-ai\.cache\context-library, generated 32-hex keys only, ignored by Git
@@ -321,7 +321,8 @@ Raw-body uploads avoid multipart temp spooling. Enforce authentication before bo
 parsing, exact mutation origins, configurable byte/text/page/block/expanded-content
 limits, MIME/extension/signature/encoding checks. Blocking PDF/DOCX parsing runs in
 bounded worker threads. No OCR, XML entity expansion, macro/action execution,
-external decoder, provider request, retrieval, embeddings or prompt changes.
+external decoder or provider call during ordinary library CRUD. Milestone 10
+indexing/retrieval is separate and requires explicit transmission consent.
 No titles, notes, binary bytes or parser exceptions in operational logs.
 
 Native `context_library::library_request` accepts typed operations only. File
@@ -341,3 +342,48 @@ parser/storage/commit failure paths, stale responses, auth expiry, CRUD and all
 existing pipeline/privacy/pointer regressions. Generate disposable fixtures under
 .cache; never add user documents or large binary fixtures to Git. Never destructively
 downgrade the user's real Neon database; offline SQL or explicit disposable DB only.
+
+
+## Milestone 10 RAG invariants
+
+`app/rag` separates versioned owned indexing, chunking, embedding abstraction,
+repository, bounded retrieval and grounded service/DTOs. Preserve General's original
+AnswerService/AnswerProvider path and zero document lookup/embedding behavior.
+Context Guided separates general supplements from document support; Materials Only
+requires sufficient selected evidence and per-answer/explanation/key-point support,
+plus the implemented independent structured verification call. Failed verification,
+contradictions, missing indexes or no relevant evidence abstain; never auto-fallback
+to General or broaden a document selection.
+
+Authorization precedes retrieval/embeddings/reasoning. Every query is owner-scoped;
+composite FKs bind chunk/index ownership. Only explicitly selected IDs (max five)
+are eligible. Never accept client excerpts, vectors, titles, pages or citations as
+trusted source metadata. Resolve citations from retrieved rows and validate reference
+membership and source support. Never expose hidden reasoning.
+
+Index explicitly; no startup/upload/rename backfill. Lexical is local; semantic
+indexing requires boolean user consent before OpenAI document transmission. Grounded
+answers require separate passage-transmission consent. SDK keys remain backend-only,
+max_retries=0; batches/inputs/deadlines bounded. Query embeddings are ephemeral and
+must never be stored. Document vectors may persist with library data only.
+
+`0003_context_rag` is additive; do not modify older migrations or use create_all.
+pgvector capability is checked. JSONB stores dimension-flexible document vectors;
+pgvector performs scoped exact cosine ranking. Lexical fallback uses PostgreSQL GIN
+full-text ranking and must be labelled honestly. No ANN performance claim. Index
+claims/generation publication are transactional; retirement prevents stale chunks,
+failures are retryable, unchanged non-forced requests are idempotent. Renames do not
+re-embed. Deletion cascades derived rows; pending deletions are excluded immediately.
+
+Treat all source text as untrusted data, never system instructions/tools/auth policy.
+Fixed prompts, strict support contracts and a separate Materials Only check reduce
+risk; do not claim perfect semantic grounding or prompt-injection immunity. Source
+support is model-verified, not mathematical proof. Never log document/query/answer
+content, vectors, provider payloads or credentials. Keep native credentials in Rust.
+
+`src/rag` owns ephemeral mode/selection/consent/readiness; invalidation cancels answers
+on changes/logout/expiry. Keep late index/answer/catalog results from restoring stale
+state. Selected documents beyond the first page must remain correctly represented.
+Keep library source links, themes, keyboard/focus, compact layout, Pointer Light and
+screen-share privacy. All live learning content stays ephemeral; no session/history,
+telemetry, monetization, OCR or account-wide auto-retrieval. Stop at Milestone 10.

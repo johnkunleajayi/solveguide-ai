@@ -1,5 +1,7 @@
 import type { QuestionObservation } from '../vision/types'
+import type { Grounding, ReasoningOptions } from '../rag/types'
 export interface AnswerRecommendation {
+  grounding?: Grounding
   status: 'answered' | 'uncertain' | 'insufficient_information' | 'unsupported'
   question_type: QuestionObservation['question_type']
   selected_options: string[]
@@ -12,7 +14,7 @@ export interface AnswerRecommendation {
   warnings: string[]
 }
 export interface AnswerError { code: string; message: string }
-export type AnswerApi = (observation: QuestionObservation, signal: AbortSignal) => Promise<AnswerRecommendation>
+export type AnswerApi = (observation: QuestionObservation, signal: AbortSignal, options?: ReasoningOptions) => Promise<AnswerRecommendation>
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const text = (v: unknown, max: number): v is string => typeof v === 'string' && v.trim().length > 0 && v.length <= max
 const texts = (v: unknown, max: number, length: number): v is string[] => Array.isArray(v) && v.length <= length && v.every(s => text(s, max))

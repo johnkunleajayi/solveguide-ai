@@ -6,11 +6,11 @@ import { createLibraryController } from '../library/controller'
 import type { LibraryState } from '../library/types'
 
 type Controller = ReturnType<typeof createLibraryController>
-export function ContextLibrary({ onModalChange }: { onModalChange: (open: boolean) => void }) {
+export function ContextLibrary({ onModalChange, initialDocumentId }: { onModalChange: (open: boolean) => void; initialDocumentId?: string | null }) {
   const { controller: auth } = useAuth()
   const [controller] = useState(() => createLibraryController(libraryApi, auth.invalidate))
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
-  useEffect(() => { void controller.load(); return () => controller.dispose() }, [controller])
+  useEffect(() => { void controller.load().then(ok => { if (ok && initialDocumentId) void controller.select(initialDocumentId) }); return () => controller.dispose() }, [controller, initialDocumentId])
   return <LibraryContent state={state} controller={controller} onModalChange={onModalChange} />
 }
 const statusText = { ready: 'Text ready', insufficient: 'No readable text · OCR unavailable', failed: 'Extraction unavailable', deleting: 'Deletion pending · retry removal' }
@@ -34,7 +34,7 @@ export function LibraryContent({ state, controller, onModalChange }: { state: Li
     <header className="library-heading"><div><span className="eyebrow">YOUR REFERENCE SHELF</span><h1 id="library-title">Context Library<span className="luminous-text">.</span></h1><p>Keep the material you want to return to.</p></div>
       <div className="library-actions"><button className="button library-secondary" onClick={() => setAdding(!adding)} disabled={busy} aria-expanded={adding}><Plus size={16} aria-hidden="true" />Paste text</button><button ref={addButton} className="button button-primary" onClick={() => { void controller.upload() }} disabled={busy}><Upload size={16} aria-hidden="true" />Add document</button></div>
     </header>
-    <p className="library-privacy">Materials you add are saved privately to your account’s library. Current answers do not use them, and they are not sent to an AI provider.</p>
+    <p className="library-privacy">Materials you add are saved privately to your account’s library. General mode does not use them. Semantic indexing and grounded answers send text to OpenAI only after your explicit consent.</p>
     <p className="library-limits">PDF · DOCX · TXT{state.limits && <> · Up to {Math.round(state.limits.upload_bytes / 1024 / 1024)} MiB per file · {state.limits.text_characters.toLocaleString()} extracted characters · {state.limits.pdf_pages} PDF pages</>}. Machine-readable text only; OCR is not available.</p>
     <div role="status" aria-live="polite" className="library-status">{state.phase === 'loading' ? 'Opening your library…' : state.phase === 'working' ? 'Working with your document…' : state.notice}</div>
     {state.error && <div role="alert" className="library-error"><p>{state.error}</p><button className="button library-secondary" disabled={busy} onClick={() => { void controller.load() }}><RefreshCw size={15} aria-hidden="true" />Refresh library</button></div>}

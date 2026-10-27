@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 from openai import (
@@ -15,6 +16,8 @@ from app.answer.errors import AnswerError
 from app.answer.prompt import ANSWER_INSTRUCTIONS, answer_input
 from app.answer.schemas import AnswerRecommendation
 from app.config import Settings
+from app.rag.prompt import GROUNDED_INSTRUCTIONS, VERIFY_INSTRUCTIONS
+from app.rag.schemas import GroundedDraft, GroundingCheck
 from app.schemas import QuestionObservation
 
 
@@ -23,6 +26,49 @@ class OpenAIAnswerProvider:
         self.settings = settings
 
     async def recommend(self, observation: QuestionObservation) -> AnswerRecommendation:
+        return await self._parse(
+            ANSWER_INSTRUCTIONS, answer_input(observation), AnswerRecommendation
+        )
+
+    async def recommend_grounded(self, observation, mode, evidence):
+        payload = dict(
+            reasoning_mode=mode,
+            observation=observation.model_dump(),
+            retrieved_evidence=[e.model_dump() for e in evidence],
+        )
+        try:
+            async with asyncio.timeout(self.settings.answer_timeout_seconds):
+                draft = await self._parse(
+                    GROUNDED_INSTRUCTIONS, json.dumps(payload, ensure_ascii=False), GroundedDraft
+                )
+                if (
+                    mode == "materials_only"
+                    and draft.sufficient_evidence
+                    and not draft.contradictory_evidence
+                ):
+                    check = await self._parse(
+                        VERIFY_INSTRUCTIONS,
+                        json.dumps(
+                            dict(
+                                observation=payload["observation"],
+                                evidence=payload["retrieved_evidence"],
+                                proposal=draft.model_dump(),
+                            ),
+                            ensure_ascii=False,
+                        ),
+                        GroundingCheck,
+                    )
+                    if not check.supported or check.contradictory:
+                        draft.sufficient_evidence = False
+                        draft.contradictory_evidence = check.contradictory
+                        draft.limitation = check.limitation
+                return draft
+        except TimeoutError:
+            raise AnswerError(
+                "answer_timeout", "Grounding verification timed out. Try again.", 504
+            ) from None
+
+    async def _parse(self, instructions, task_input, schema):
         if not self.settings.provider_configured:
             raise AnswerError(
                 "answer_not_configured",
@@ -41,14 +87,14 @@ class OpenAIAnswerProvider:
             ):
                 response = await client.responses.parse(
                     model=self.settings.openai_answer_model,
-                    instructions=ANSWER_INSTRUCTIONS,
+                    instructions=instructions,
                     input=[
                         {
                             "role": "user",
-                            "content": [{"type": "input_text", "text": answer_input(observation)}],
+                            "content": [{"type": "input_text", "text": task_input}],
                         }
                     ],
-                    text_format=AnswerRecommendation,
+                    text_format=schema,
                     reasoning={"effort": self.settings.answer_reasoning_effort},
                     max_output_tokens=self.settings.answer_max_output_tokens,
                     store=False,
@@ -59,7 +105,7 @@ class OpenAIAnswerProvider:
                     "The provider did not return a complete recommendation. Please try again.",
                 )
             # Return only validated public output, never response reasoning items or metadata.
-            return AnswerRecommendation.model_validate(response.output_parsed.model_dump())
+            return schema.model_validate(response.output_parsed.model_dump())
         except AnswerError:
             raise
         except (APITimeoutError, TimeoutError):

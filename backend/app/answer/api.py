@@ -10,6 +10,8 @@ from app.answer.errors import AnswerError
 from app.answer.schemas import AnswerRecommendation
 from app.answer.service import AnswerService
 from app.auth.dependencies import required_current_user
+from app.auth.models import User
+from app.rag.schemas import GroundedAnswer, ReasoningRequest
 from app.schemas import QuestionObservation
 
 router = APIRouter()
@@ -22,16 +24,23 @@ def get_answer_service(request: Request) -> AnswerService:
 
 @router.post(
     "/api/v1/answer",
-    response_model=AnswerRecommendation,
+    response_model=AnswerRecommendation | GroundedAnswer,
     dependencies=[Depends(required_current_user)],
 )
 async def suggested_answer(
-    observation: QuestionObservation, service: Annotated[AnswerService, Depends(get_answer_service)]
-) -> AnswerRecommendation:
+    observation: QuestionObservation | ReasoningRequest,
+    service: Annotated[AnswerService, Depends(get_answer_service)],
+    request: Request,
+    user: Annotated[User, Depends(required_current_user)],
+) -> AnswerRecommendation | GroundedAnswer:
     started = time.monotonic()
     outcome = "failed"
     try:
-        result = await service.recommend(observation)
+        result = (
+            await request.app.state.rag_service.recommend(user.id, observation)
+            if isinstance(observation, ReasoningRequest)
+            else await service.recommend(observation)
+        )
         outcome = result.status
         return result
     except AnswerError as error:

@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     answer_timeout_seconds: float = Field(default=60, ge=1, le=90)
     answer_max_output_tokens: int = Field(default=6000, ge=1024, le=12000)
     answer_reasoning_effort: Literal["none", "low", "medium", "high"] = "medium"
+    openai_embedding_model: str = Field(
+        default="text-embedding-3-small", min_length=1, max_length=100
+    )
+    embedding_dimensions: int = Field(default=512, ge=64, le=1536)
+    embedding_timeout_seconds: float = Field(default=25, ge=1, le=45)
+    rag_chunk_characters: int = Field(default=1000, ge=400, le=1600)
+    rag_top_k: int = Field(default=6, ge=1, le=10)
+    rag_context_tokens: int = Field(default=6000, ge=1600, le=10000)
+    rag_semantic_threshold: float = Field(default=0.3, ge=0, le=1)
 
     database_url: SecretStr | None = None
     google_client_id: str = Field(default="", max_length=300)

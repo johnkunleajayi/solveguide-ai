@@ -383,6 +383,8 @@ def test_postgres_constraints_metadata_and_url(platform):
         "auth_sessions",
         "oauth_attempts",
         "context_documents",
+        "context_indexes",
+        "context_chunks",
     }
     user = User(email=" Mixed@Example.COM ")
     assert user.email == "mixed@example.com"

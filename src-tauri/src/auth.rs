@@ -97,7 +97,11 @@ impl AuthState {
             )
             .header("Origin", ORIGIN)
             .bearer_auth(&token)
-            .timeout(Duration::from_secs(60));
+            .timeout(Duration::from_secs(if request.suffix.ends_with("/index") {
+                150
+            } else {
+                60
+            }));
         if let Some((content_type, filename, bytes)) = request.body {
             builder = builder.header("Content-Type", content_type).body(bytes);
             if let Some(filename) = filename {

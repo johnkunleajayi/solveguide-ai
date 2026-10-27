@@ -17,7 +17,7 @@ const captureTypes = compile('capture/types.ts')
 const { createCaptureController } = compile('capture/controller.ts', { './types': captureTypes })
 const { createObservationController } = compile('vision/controller.ts')
 const transport = { requestCore: async () => { throw Error('Unexpected transport call') } }
-const { getSuggestedAnswer } = compile('answer/client.ts', { './types': types, '../api/core': transport })
+const { getSuggestedAnswer } = compile('answer/client.ts', { './types': types, '../api/core': transport, '../rag/client': {}  })
 const observation = { status: 'detected', question_type: 'multiple_choice', question_text: 'Which figure is round?', options: [{ label: 'A', text: 'Circle' }, { label: 'B', text: 'Square' }], instructions: ['Choose one.'], required_selection_count: 1, visible_context: [], visual_elements: [], extraction_confidence: .95, warnings: [] }
 const result = { status: 'answered', question_type: 'multiple_choice', selected_options: ['A'], answer_text: 'A circle.', true_false_answer: null, code_answer: null, explanation: 'A circle has no corners.', key_points: [], confidence: .88, warnings: [] }
 const source = { id: 'screen', kind: 'screen', title: 'Display', width: 100, height: 100, x: 0, y: 0, primary: true }

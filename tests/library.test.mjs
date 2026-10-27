@@ -34,7 +34,7 @@ test('library loads an authenticated list and configured limits', async () => {
 test('empty state distinguishes persistent materials from ephemeral learning and unused AI context', async () => {
   const c = createLibraryController(api(), noop); await c.load()
   const html = content(c.getSnapshot())
-  assert.match(html, /A place for what/); assert.match(html, /Current answers do not use/)
+  assert.match(html, /A place for what/); assert.match(html, /General mode does not use/)
   assert.match(html, /Live captures, questions and answers remain ephemeral/)
   assert.match(html, /PDF · DOCX · TXT/); assert.match(html, /10 MiB/)
   assert.match(html, /Add document/); assert.match(html, /Paste text/)
@@ -121,13 +121,13 @@ test('pagination appends documents instead of replacing the current page', async
 })
 test('typed native client sends operations without credentials or paths', async () => {
   const calls = []
-  const { libraryApi } = compile('library/client.ts', { './types': types, '@tauri-apps/api/core': { isTauri: () => true, invoke: async (command, args) => { calls.push([command, args]); return { ok: true, status: 201, data: document } } } })
+  const { libraryApi } = compile('library/client.ts', { './types': types, './changes': { notifyLibraryChange() {} }, '@tauri-apps/api/core': { isTauri: () => true, invoke: async (command, args) => { calls.push([command, args]); return { ok: true, status: 201, data: document } } } })
   await libraryApi.upload(); await libraryApi.paste('Title', 'Notes')
   assert.deepEqual(calls[0], ['library_request', { operation: { kind: 'upload' } }])
   assert.deepEqual(calls[1][1], { operation: { kind: 'paste', title: 'Title', text: 'Notes' } })
 })
 test('native client maps unauthorized to the authentication gate and sanitizes errors', async () => {
-  const { libraryApi } = compile('library/client.ts', { './types': types, '@tauri-apps/api/core': { isTauri: () => true, invoke: async () => ({ ok: false, status: 401, error: { code: 'raw-secret-internal' } }) } })
+  const { libraryApi } = compile('library/client.ts', { './types': types, './changes': { notifyLibraryChange() {} }, '@tauri-apps/api/core': { isTauri: () => true, invoke: async () => ({ ok: false, status: 401, error: { code: 'raw-secret-internal' } }) } })
   await assert.rejects(libraryApi.upload(), e => e.code === 'sign_in_required' && !e.message.includes('raw-secret'))
 })
 test('runtime document guard rejects malformed and unsafe structure contracts', () => {
@@ -135,7 +135,7 @@ test('runtime document guard rejects malformed and unsafe structure contracts', 
   for (const patch of [{ extraction_status: 'pretend' }, { extracted_text: 12 }, { extraction_structure: [{ kind: 'page', number: 1, start: 5, end: 3 }] }]) assert.throws(() => types.parseDocument({ ...document, ...patch }, true))
 })
 test('native library is unavailable in a browser and does not touch storage', async () => {
-  const { libraryApi } = compile('library/client.ts', { './types': types, '@tauri-apps/api/core': { isTauri: () => false, invoke: () => { throw Error('must not run') } } })
+  const { libraryApi } = compile('library/client.ts', { './types': types, './changes': { notifyLibraryChange() {} }, '@tauri-apps/api/core': { isTauri: () => false, invoke: () => { throw Error('must not run') } } })
   await assert.rejects(libraryApi.list(), e => e.code === 'desktop_required')
 })
 test('signed-in navigation offers library alongside the unchanged learning workspace', () => {

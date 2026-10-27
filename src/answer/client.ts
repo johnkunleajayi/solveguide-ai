@@ -1,7 +1,16 @@
 import type { QuestionObservation } from '../vision/types'
 import { parseAnswer, type AnswerError } from './types'
 import { requestCore } from '../api/core'
+import { parseGroundedAnswer } from '../rag/client'
+import type { ReasoningOptions } from '../rag/types'
 const messages: Record<string, string> = {
+  context_changed: 'Selected materials changed. Refresh readiness and request a new answer.',
+  context_consent_required: 'Allow selected passage transmission before a grounded answer.',
+  document_not_found: 'A selected document is no longer available. Refresh and review the selection.',
+  embedding_timeout: 'Question retrieval timed out. Retry explicitly.',
+  embedding_unavailable: 'Semantic retrieval is unavailable. Try again later.',
+  embedding_not_configured: 'The embedding provider needs backend configuration.',
+
   answer_not_configured: 'Set OPENAI_API_KEY in backend/.env, then restart the backend.',
   answer_authentication: 'The answer provider rejected the credentials. Review backend configuration.',
   answer_timeout: 'The suggested answer timed out. Please try again.',
@@ -14,16 +23,17 @@ const messages: Record<string, string> = {
   answer_type_mismatch: 'The recommendation did not match the question type. Try Again.',
   request_too_large: 'The observation is too large. Retake a more focused question.',
 }
-export async function getSuggestedAnswer(observation: QuestionObservation, signal: AbortSignal) {
+export async function getSuggestedAnswer(observation: QuestionObservation, signal: AbortSignal, options?: ReasoningOptions) {
   const timeout = AbortSignal.timeout(110_000)
   try {
-    const response = await requestCore('answer', observation, AbortSignal.any([signal, timeout]))
+    const grounded = options && options.mode !== 'general'
+    const response = await requestCore('answer', grounded ? { observation, ...options } : observation, AbortSignal.any([signal, timeout]))
     const raw: unknown = response.data
     if (!response.ok) {
       const code = response.status === 401 ? (response.error?.code ?? 'sign_in_required') : response.error?.code ?? 'answer_provider_error'
       throw { code, message: messages[code] ?? 'A recommendation could not be prepared. Please try again.' } satisfies AnswerError
     }
-    return parseAnswer(raw, observation)
+    return grounded ? parseGroundedAnswer(raw, observation, options) : parseAnswer(raw, observation)
   } catch (error) {
     if (signal.aborted) throw error
     if (timeout.aborted) throw { code: 'answer_timeout', message: messages.answer_timeout } satisfies AnswerError

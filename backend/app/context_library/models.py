@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -23,6 +24,7 @@ class ContextDocument(Base):
     # Async DTO serialization must not issue implicit IO for server-updated timestamps.
     __mapper_args__ = {"eager_defaults": True}
     __table_args__ = (
+        UniqueConstraint("id", "owner_id", name="uq_context_documents_id_owner"),
         CheckConstraint("source_type IN ('upload','pasted_text')", name="source_type"),
         CheckConstraint("document_type IN ('pdf','docx','txt')", name="document_type"),
         CheckConstraint(

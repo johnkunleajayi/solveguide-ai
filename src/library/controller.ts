@@ -28,7 +28,7 @@ export function createLibraryController(api: LibraryApi, onAccessFailure: (error
       if (current !== generation) return {}
       if (!document) return { notice: 'File selection cancelled.' }
       const page = await api.list()
-      return { documents: page.documents, cursor: page.next_cursor, detail: document, notice: 'Added to your reusable library. Current answers do not use these materials.' }
+      return { documents: page.documents, cursor: page.next_cursor, detail: document, notice: 'Added to your reusable library. Select and index materials explicitly before using them in grounded answers.' }
     })
   }
   return {

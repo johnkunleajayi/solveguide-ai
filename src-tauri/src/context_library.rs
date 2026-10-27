@@ -9,13 +9,41 @@ const MAX_FILE: u64 = 20 * 1024 * 1024; // Hard ceiling; backend configuration m
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    List { cursor: Option<String> },
+    List {
+        cursor: Option<String>,
+    },
     Limits,
-    Detail { id: String },
-    Rename { id: String, title: String },
-    Delete { id: String },
-    Paste { title: String, text: String },
+    IndexList {
+        cursor: Option<String>,
+        selected: Option<Vec<String>>,
+    },
+    Index {
+        id: String,
+        method: IndexMethod,
+        consent: bool,
+        force: bool,
+    },
+    Detail {
+        id: String,
+    },
+    Rename {
+        id: String,
+        title: String,
+    },
+    Delete {
+        id: String,
+    },
+    Paste {
+        title: String,
+        text: String,
+    },
     Upload,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexMethod {
+    SemanticPgvector,
+    Lexical,
 }
 pub(crate) type RequestBody = (&'static str, Option<String>, Vec<u8>);
 pub(crate) struct Request {
@@ -78,6 +106,49 @@ fn request(operation: Operation) -> Result<Request, AuthError> {
             )
         }
         Operation::Limits => (Method::GET, "/limits".into(), None),
+        Operation::IndexList { cursor, selected } => {
+            let mut params = Vec::new();
+            if let Some(value) = cursor {
+                identifier(&value)?;
+                params.push(format!("cursor={value}"));
+            }
+            if let Some(values) = selected {
+                if values.len() > 5 {
+                    return Err(error("invalid_request"));
+                }
+                for value in values {
+                    identifier(&value)?;
+                    params.push(format!("selected={value}"));
+                }
+            }
+            (
+                Method::GET,
+                format!(
+                    "/indexes{}",
+                    if params.is_empty() {
+                        String::new()
+                    } else {
+                        format!("?{}", params.join("&"))
+                    }
+                ),
+                None,
+            )
+        }
+        Operation::Index {
+            id,
+            method,
+            consent,
+            force,
+        } => {
+            identifier(&id)?;
+            (
+                Method::POST,
+                format!("/{id}/index"),
+                json_body(
+                    serde_json::json!({"method":match method { IndexMethod::SemanticPgvector => "semantic_pgvector", IndexMethod::Lexical => "lexical" },"consent":consent,"force":force}),
+                )?,
+            )
+        }
         Operation::Detail { id } => {
             identifier(&id)?;
             (Method::GET, format!("/{id}"), None)
@@ -240,5 +311,44 @@ mod tests {
         let result =
             tauri::async_runtime::block_on(state.library_credential_present(state.session_epoch()));
         assert!(result.is_err());
+    }
+    #[test]
+    fn index_routes_bound_selection_and_preserve_explicit_consent() {
+        let id = "00000000-0000-0000-0000-000000000001".to_string();
+        let prepared = request(Operation::Index {
+            id: id.clone(),
+            method: IndexMethod::SemanticPgvector,
+            consent: false,
+            force: false,
+        })
+        .unwrap();
+        assert_eq!(prepared.method, Method::POST);
+        assert_eq!(prepared.suffix, format!("/{id}/index"));
+        let body: serde_json::Value = serde_json::from_slice(&prepared.body.unwrap().2).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"method":"semantic_pgvector","consent":false,"force":false})
+        );
+        assert!(request(Operation::IndexList {
+            cursor: None,
+            selected: Some(vec![id.clone(); 6])
+        })
+        .is_err());
+        assert!(request(Operation::IndexList {
+            cursor: None,
+            selected: Some(vec!["../auth".into()])
+        })
+        .is_err());
+        let selected = request(Operation::IndexList {
+            cursor: None,
+            selected: Some(vec![id.clone()]),
+        })
+        .unwrap();
+        assert_eq!(selected.suffix, format!("/indexes?selected={id}"));
+    }
+    #[test]
+    fn indexing_ipc_rejects_arbitrary_paths_and_methods() {
+        assert!(serde_json::from_value::<Operation>(serde_json::json!({"kind":"index", "id":"00000000-0000-0000-0000-000000000001", "method":"arbitrary", "consent":true,"force":false})).is_err());
+        assert!(serde_json::from_value::<Operation>(serde_json::json!({"kind":"index_list", "cursor":null,"selected":null,"path":"private-file"})).is_err());
     }
 }

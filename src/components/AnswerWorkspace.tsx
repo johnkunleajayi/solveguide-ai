@@ -13,8 +13,12 @@ import { AnswerRecommendationView } from './AnswerRecommendationView'
 import { useAuth } from '../auth/context'
 import { authApi } from '../auth/client'
 import { authenticatedCapture, connectWorkspaceAccess } from '../auth/workspace'
+import { ReasoningControls } from './ReasoningControls'
+import { createReasoningController } from '../rag/controller'
+import { ragApi } from '../rag/client'
+import { subscribeLibraryChanges } from '../library/changes'
 
-export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange: (open: boolean) => void }) {
+export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDocument }: { onCaptureModalChange: (open: boolean) => void; active?: boolean; onOpenDocument?: (id: string) => void }) {
   const { controller: auth } = useAuth()
   const [protectedCapture] = useState(() => authenticatedCapture(nativeCapture, authApi, auth.invalidate))
   const [controller] = useState(() => createCaptureController(protectedCapture))
@@ -23,13 +27,26 @@ export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange
   const observation = useSyncExternalStore(observationController.subscribe, observationController.getSnapshot)
   const [answerController] = useState(() => createAnswerController(getSuggestedAnswer))
   const answer = useSyncExternalStore(answerController.subscribe, answerController.getSnapshot)
+  const [reasoning] = useState(() => createReasoningController(ragApi, answerController.reset, auth.invalidate))
+  const reasoningState = useSyncExternalStore(reasoning.subscribe, reasoning.getSnapshot)
+  useEffect(() => subscribeLibraryChanges(id => {
+    if (reasoning.getSnapshot().selected.includes(id)) { answerController.reset(); void reasoning.refresh() }
+  }), [reasoning, answerController])
+  useEffect(() => { if (active) void reasoning.refresh() }, [active, reasoning])
+  useEffect(() => {
+    const refresh = () => { if (active) void reasoning.refresh() }
+    window.addEventListener('focus', refresh)
+    const timer = setInterval(refresh, 60_000)
+    return () => { window.removeEventListener('focus', refresh); clearInterval(timer) }
+  }, [active, reasoning])
+  useEffect(() => () => reasoning.dispose(), [reasoning])
   useEffect(() => connectAnswerLifecycle(answerController, controller, observationController), [answerController, controller, observationController])
   useEffect(() => {
     protectedCapture.activate()
     const disconnect = connectWorkspaceAccess(controller, observationController, answerController, auth.invalidate)
     return () => { protectedCapture.close(); disconnect() }
   }, [controller, observationController, answerController, auth, protectedCapture])
-  const requestAnswer = () => { if (observation.observation) void answerController.request(observation.observation) }
+  const requestAnswer = () => { if (observation.observation && reasoning.ready()) void answerController.request(observation.observation, reasoning.options()) }
   useEffect(() => {
     observationController.reset()
     return () => observationController.reset()
@@ -57,6 +74,7 @@ export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange
       </section>
 
       <CaptureDialog state={capture} controller={controller} />
+      <ReasoningControls state={reasoningState} controller={reasoning} />
 
       <div className="workbench reveal" data-spotlight>
         <section className="question-panel" aria-labelledby="question-title">
@@ -78,13 +96,13 @@ export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange
             <span className="state-label">{observation.phase === 'ready' ? 'Read' : observation.phase === 'reading' ? 'Reading' : 'Not read'}</span>
           </header>
           <QuestionObservationView state={observation} onRetry={readCapture} onCancel={() => observationController.reset()} />
-          <AnswerRecommendationView state={answer} observation={observation.observation} onRequest={requestAnswer} onCancel={() => answerController.reset()} enabled={observation.phase === 'ready' && capture.phase === 'preview'} />
+          <AnswerRecommendationView state={answer} observation={observation.observation} onRequest={requestAnswer} onCancel={() => answerController.reset()} onOpenDocument={onOpenDocument} enabled={observation.phase === 'ready' && capture.phase === 'preview' && reasoning.ready()} />
         </section>
 
         <aside className="context-strip" aria-label="Context status">
           <span className="context-title"><span className="section-index" aria-hidden="true">04</span>Context</span>
-          <span className="context-description">No materials connected</span>
-          <span className="planned-label">Context Library · Planned</span>
+          <span className="context-description">{reasoningState.mode.replace('_', ' ')} · {reasoningState.selected.length} selected</span>
+          <span className="planned-label">Explicit selection · Ephemeral answers</span>
         </aside>
       </div>
     </>

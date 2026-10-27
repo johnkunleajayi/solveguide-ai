@@ -15,7 +15,8 @@ possible account/commercial surfaces, not a duplicate learning app.
 Milestone 6 adds PostgreSQL-backed Google identity and server-side sessions around
 that pipeline. Signing in never saves captures, questions or answers. Milestone 9
 adds an authenticated, reusable Context Library for explicitly added documents;
-these documents are persistent and are not used by the AI pipeline yet.
+these documents are persistent. Milestone 10 adds explicit selected-document RAG,
+three reasoning modes and citations after provider-transmission consent.
 
 ## Canonical workspace
 
@@ -313,8 +314,7 @@ the exclusive source unless explicitly requested.
 | CONTEXT GUIDED | Selected materials guide reasoning while broader knowledge stays available; default when materials are selected |
 | MATERIALS ONLY | Answer only with sufficient selected-material support and communicate insufficiency |
 
-Uploads and deterministic parsing are implemented in Milestone 9. Retrieval, RAG,
-embeddings, vector storage and session preparation are not implemented. Future user-selected region capture belongs in Tauri/Rust. Ordinary
+Uploads and deterministic parsing are implemented in Milestone 9. Milestone 10 adds retrieval and document embeddings; session preparation remains unimplemented. Future user-selected region capture belongs in Tauri/Rust. Ordinary
 screen-sharing privacy now uses supported native OS capture exclusion on Windows, never
 CSS tricks or anti-proctoring, monitoring/detection evasion or security circumvention.
 See Milestone 7 below for scope and limitations. Shared visual primitives may also
@@ -461,7 +461,7 @@ React/Rust. Images are not resent for answers, and neither question nor answer p
 are logged. Answer logs contain only event/request ID, outcome and duration. Keep
 `store=False`; existing provider-retention caveats still apply. Milestone 5 introduced
 no persistence/authentication. Milestone 6 stores identity/session metadata only;
-Milestone 9 adds only the separate Context Library. RAG, region capture, analytics and question/answer history remain absent.
+Milestone 9 adds only the separate Context Library. Milestone 10 adds selected-document RAG; region capture, analytics and question/answer history remain absent.
 
 ### Controlled live reasoning check and manual fallback
 
@@ -486,7 +486,7 @@ If Computer Use cannot safely access a browser's current URL, stop browser autom
 Do not bypass that guard through another browser-control mechanism. Leave the live
 UI check pending for the user rather than reporting mocked tests as live success.
 Future selected-context input belongs beside QuestionObservation at the service boundary;
-RAG, Context Guided/Materials Only modes and Session Preparation remain
+Session Preparation remains
 unimplemented, as described above.
 
 ## Milestone 6: authenticated platform foundation
@@ -584,7 +584,7 @@ Public user DTO: id, email, email_verified, display_name, avatar_url. No Google 
 hashes, provider credentials or database details. `optional_current_user` and
 `required_current_user` are reusable dependencies. User-owned Context Library
 and Session Preparation must use required authentication and server-side `user.id`
-ownership filters; never trust a client-supplied owner ID. They are not implemented.
+ownership filters; never trust a client-supplied owner ID. Context Library ownership is implemented.
 
 ### Configuration and exact setup
 
@@ -840,10 +840,10 @@ provider-backed service execution, without changing Google sign-in, capture or p
 ## Milestone 9: reusable Context Library foundation
 
 Context Library is part of the authenticated Windows desktop product. It manages
-PDF, DOCX, TXT and pasted plain text for reuse across sessions. It does **not**
-ground current recommendations: no retrieval, RAG, embeddings, vector store,
-Context Guided/Materials Only mode or Session Preparation is implemented. Library
-operations never call VisionProvider, AnswerProvider or OpenAI.
+PDF, DOCX, TXT and pasted plain text for reuse across sessions. Ordinary library
+CRUD remains local to the backend/storage and never calls AI providers. Milestone 10
+adds explicit indexing and grounded reasoning after consent; see its architecture below.
+Session Preparation is not implemented.
 
 ### Architecture, ownership and storage
 
@@ -943,8 +943,8 @@ introduced. Normal successful deletion removes all three forms of content.
 **Two privacy models:** library materials persist because the user explicitly adds
 them. Live screenshots, captured questions, QuestionObservation, recommendations
 and explanations remain ephemeral. Signing in or adding a document does not save
-live content. No history, telemetry, document-provider transmission or prompt
-changes were added. Logs exclude filenames/titles, document text and binary bytes.
+live content. No history or telemetry is added. Document transmission is now possible only through
+explicitly consented semantic indexing or grounded reasoning in Milestone 10. Logs exclude filenames/titles, document text and binary bytes.
 Screen-share privacy protects the same native top-level window and remains unchanged.
 
 ### Development and manual verification
@@ -973,5 +973,166 @@ reauthenticate to confirm remaining library items persist. Test another user for
 isolation if available. Check dark/light/System, Pointer Light, keyboard focus,
 Escape/confirmation focus return and the 640 x 560 compact layout. Then confirm
 Capture -> Read Question -> Get Suggested Answer remains unchanged, materials
-are not used in answers, and Screen-share privacy remains ON. No Google login or
+are ignored in General mode, and Screen-share privacy remains ON. No Google login or
 personal document uploads are performed by automated validation.
+
+
+## Milestone 10: context-aware reasoning and RAG
+
+`backend/app/rag` owns typed contracts, deterministic chunking, indexing orchestration,
+EmbeddingProvider/OpenAIEmbeddingProvider, PostgreSQL repository, retrieval, grounding
+validation and authenticated indexing endpoints. It composes the existing AnswerService
+and extends AnswerProvider with `recommend_grounded`; General still calls the original
+`recommend` path. Vision and native capture are unchanged. There is no browser product,
+Session Preparation, persistent learning session, monetization or learning history.
+
+| Mode | Contract |
+| --- | --- |
+| General | Default; bypasses document lookup, retrieval and embeddings, even with UI selections. |
+| Context Guided | Selected passages are preferred evidence; supplementary model reasoning appears separately and is not presented as document evidence. |
+| Materials Only | Selected evidence exclusively; answer, explanation and every key point need source references. Missing, irrelevant, conflicting, unavailable or unverified support produces abstention. |
+
+Selection and mode are workspace-memory preferences, not persistent sessions. Selecting
+materials recommends Context Guided without overriding an explicit mode. Materials Only
+requires ready indexed documents. At most five documents are selected per answer.
+
+### Indexing lifecycle and provider consent
+
+Existing documents require no re-upload. Open Reasoning & materials, refresh readiness,
+and explicitly choose Index locally or Semantic index for each document. Local lexical
+indexing sends no document text. Semantic indexing requires an unchecked-by-default
+permission control disclosing that OpenAI receives the document text and may charge.
+The server also requires boolean consent. Consent time is recorded on that document's
+index. Nothing indexes automatically on upload, login, rename or startup.
+
+Chunking version 1 defaults to 1000 characters with roughly one-sixth overlap and word
+boundaries where available. PDF chunks never cross page boundaries; other source block
+locations and absolute Unicode offsets are retained. UUID5 identifiers are stable for
+unchanged document text/ranges. A digest covers source text/structure, chunking and
+embedding configuration, excluding title. Repeated non-forced indexing is idempotent;
+explicit reindex retires old chunks and changes generation. Renaming does not re-embed.
+
+A document-row lock serializes index claims. A committed indexing state retires the old
+chunks before provider work. Chunks and ready state publish atomically; failures remain
+retryable. An abandoned claim can be retried after a three-minute lease. Processing has
+a 120-second overall deadline, at most 2500 chunks, 16-input embedding batches, bounded
+inputs and no SDK retries. Partial failed batches are not resumed; an explicit retry may
+incur charges again. There is no queue or automatic background indexing.
+
+The official OpenAI SDK embeds text with configurable model/dimensions (default
+text-embedding-3-small, 512 dimensions). Backend-only settings:
+
+```dotenv
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSIONS=512
+EMBEDDING_TIMEOUT_SECONDS=25
+RAG_CHUNK_CHARACTERS=1000
+RAG_TOP_K=6
+RAG_CONTEXT_TOKENS=6000
+RAG_SEMANTIC_THRESHOLD=0.3
+```
+
+OPENAI_API_KEY stays in backend/.env; no additional frontend/native key is introduced.
+Queries receive ephemeral embeddings only when semantic retrieval is used. Screenshots,
+observations and answers are never indexed or saved. Document vectors alone persist.
+
+### PostgreSQL, pgvector and retrieval
+
+Migration `0003_context_rag` follows immutable `0002_context_library`. It adds owned
+context_indexes/context_chunks, composite ownership foreign keys, generation/version,
+provider metadata, source offsets, JSONB document vectors, btree selection indexes and
+a GIN full-text index. Cascading deletion removes derived indexes/chunks with the document.
+Pending document deletions are immediately excluded from retrieval. No existing document
+text or auth rows are updated/deleted by the migration.
+
+The migration attempts pgvector installation only when available; supported permission/
+availability failures leave lexical search usable. Capability is checked against the
+installed extension, never assumed. JSONB vectors keep the schema compatible with plain
+PostgreSQL and configurable dimensions; pgvector casts perform **exact cosine ranking**
+within the selected owner/document scope. No HNSW/ANN acceleration is claimed. A future
+vector-column/ANN adapter can replace this repository strategy as corpus size warrants.
+
+If any selected index is lexical, or pgvector is unavailable, retrieval uses labelled
+PostgreSQL lexical ranking across those selected documents. No hidden semantic provider
+call occurs in that fallback. Embedding model/dimension mismatches require reindexing.
+Provider failures return errors rather than silently switching methods. Query terms are
+bounded and parameterized, common English words are removed, and no source outside the
+explicit selection is searched. Missing/cross-owner IDs reject the selection; it is never
+broadened to the entire account. Top-50 candidates are deterministically ordered, filtered
+by relevance, deduplicated by content/overlap and reduced to top-K within a conservative
+serialized UTF-8-byte upper bound on the context-token budget. Thresholds are heuristics,
+not calibrated evidence confidence; lexical matching has multilingual/math limitations.
+
+### Grounded answers, citations and race protection
+
+POST /api/v1/answer still accepts the legacy QuestionObservation for General. It also
+accepts `{observation, mode, document_ids, allow_context_transmission}`. Authentication
+and selected ownership precede providers. Grounded requests require separate explicit
+permission to transmit passages. The UI explains semantic query embedding and additional
+Materials Only verification costs. Only relevant bounded excerpts, not entire documents,
+are supplied to the reasoning provider.
+
+GroundedDraft contains the existing recommendation, sufficiency/conflict assessment,
+per-field support references, public limitation and separately labelled general reasoning.
+Materials Only additionally makes a separate structured support-verification call, within
+the answer deadline. Any rejection/conflict abstains with zero answer confidence. Backend
+validation checks observed option labels/counts/types and every citation against retrieved
+chunk IDs; required Materials Only answer/explanation/key-point coverage fails closed.
+Citations are constructed from actual repository evidence, including current document ID,
+title, chunk ID, real page number or null, structural location and exact supporting excerpt.
+No provider-generated page/title/excerpt is trusted. The UI expands passages and opens the
+owned source in Context Library. Reading confidence and answer confidence remain separate.
+
+Document text is untrusted evidence, never instructions. Fixed system instructions reject
+embedded role/override/tool demands; document data is serialized in the user payload.
+Providers receive no tools, arbitrary file access, session credentials or account-wide
+retrieval capability. Prompt separation and semantic verification reduce risk but cannot
+guarantee model entailment or eliminate all prompt injection; review sources critically.
+
+Index generations are checked before/after ranking and after provider completion; deleted,
+failed or reindexed documents cannot supply an accepted obsolete result. UI mode/document/
+consent changes cancel and clear pending answers synchronously. Library rename/deletion
+invalidates selected source answers through an in-process notification. Readiness refresh
+also detects generation changes, keeps selected documents beyond page one, and does not
+supersede in-progress indexing. Logout/auth expiry disposes state and ignores late results.
+
+GET /api/v1/context/documents/indexes returns owned paginated readiness/capability;
+POST /api/v1/context/documents/{id}/index accepts method, consent and optional force.
+These use existing native-memory authenticated transport, fixed routes and main-window
+checks. No credential or arbitrary path reaches React. Existing library CRUD, privacy
+protection, themes, Pointer Light, Vite exclusions and screen capture remain intact.
+
+### Validation and manual verification boundary
+
+Run existing backend/frontend/Rust validation commands and `alembic upgrade head`,
+`alembic current`, `alembic check` from D:\solveguide-ai. Offline downgrade/re-upgrade
+SQL tests preserve existing document/auth tables; destructive roundtrips run only on an
+explicit disposable TEST_DATABASE_URL, never the configured real Neon database.
+Automated providers are fakes/mocked SDK transports; no personal document transmission,
+paid model request or Google login is performed during validation.
+
+Manual: sign in; confirm old library documents; locally index a disposable reference,
+then optionally consent to semantic indexing. Select one ready reference and compare
+General, Context Guided and Materials Only; inspect real passages/pages/source links,
+then test an unrelated question for abstention. Deselect/reindex/delete the source and
+confirm stale recommendations disappear. Test consent off, provider outage, logout,
+compact windows, all themes and keyboard focus. Verify Capture -> Read Question ->
+Get Suggested Answer still works and Screen-share privacy remains ON. Live grounding
+quality, hostile-file deployment isolation and large-corpus ANN remain limitations.
+
+
+Milestone 10 continuation validated the query-vector binding with a real SQLAlchemy
+bindparam and query-only pgvector cast type. The regression compiles the PostgreSQL
+expression and verifies the parameter remains bound; live scoped SQL checks cover
+both cosine and lexical ranking. An additional opt-in test uses temporary shadow
+tables on one connection, composite temporary foreign keys and an outer transaction
+that is always rolled back. It checks ORM indexing, idempotence, ranking, ownership,
+source references, reindex invalidation and cascading cleanup with offline embeddings.
+It never writes application rows or calls a cloud provider. Run explicitly:
+
+```powershell
+$env:PYTHONPYCACHEPREFIX = 'D:\solveguide-ai\.cache\pycache'
+$env:RUN_POSTGRES_ROLLBACK_TESTS = '1'
+& .tools/python/Scripts/python.exe -m pytest backend/tests/test_rag_postgres.py --basetemp D:\solveguide-ai\.cache\pytest-rag-postgres
+Remove-Item Env:RUN_POSTGRES_ROLLBACK_TESTS
+```

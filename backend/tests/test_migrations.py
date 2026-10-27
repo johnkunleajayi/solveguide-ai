@@ -2,6 +2,7 @@ import asyncio
 import io
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from alembic import command
@@ -18,6 +19,8 @@ from app.config import Settings
 from app.context_library.service import ContextService
 from app.context_library.storage import LocalDocumentStorage
 from app.database import Base, Database
+from app.rag.repository import RagRepository
+from app.rag.service import RagService
 from app.runtime import event_loop
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,10 +33,10 @@ def config(output=None):
 
 def test_alembic_offline_upgrade_downgrade_upgrade_and_schema_consistency():
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["0002_context_library"]
+    assert script.get_heads() == ["0003_context_rag"]
     up, down, again = io.StringIO(), io.StringIO(), io.StringIO()
     command.upgrade(config(up), "head", sql=True)
-    command.downgrade(config(down), "0002_context_library:base", sql=True)
+    command.downgrade(config(down), "0003_context_rag:base", sql=True)
     command.upgrade(config(again), "head", sql=True)
     assert up.getvalue() == again.getvalue()
     for name in Base.metadata.tables:
@@ -94,12 +97,22 @@ def test_real_postgresql_roundtrip_and_constraints(monkeypatch, tmp_path):
                 kind="txt",
                 filename="notes.txt",
             )
+            rag = RagService(RagRepository(database), None, None, Settings(_env_file=None))
+            await rag.index(found.id, document.id, "lexical")
+            retrieved = await rag.retriever.retrieve(
+                found.id,
+                [document.id],
+                SimpleNamespace(question_text="Integration reference", options=[]),
+            )
+            assert retrieved.evidence and retrieved.method == "lexical"
             renamed = await service.rename(found.id, document.id, "Renamed notes")
             assert renamed.title == "Renamed notes" and renamed.updated_at.tzinfo is not None
             assert (
                 await service.detail(found.id, document.id)
             ).extracted_text == "Integration reference"
             await service.delete(found.id, document.id)
+            async with database.transaction() as db:
+                assert await db.scalar(text("SELECT count(*) FROM context_chunks")) == 0
             assert list((tmp_path / "documents").iterdir()) == []
             with pytest.raises(IntegrityError):
                 async with database.sessions() as db, db.begin():
@@ -135,3 +148,17 @@ def test_context_migration_roundtrip_preserves_auth_tables():
     for table in ["users", "auth_sessions", "oauth_attempts"]:
         assert f"CREATE TABLE {table}" not in up.getvalue()
         assert f"DROP TABLE {table}" not in down.getvalue()
+
+
+def test_rag_migration_roundtrip_preserves_documents_and_auth():
+    up, down, again = io.StringIO(), io.StringIO(), io.StringIO()
+    command.upgrade(config(up), "0002_context_library:0003_context_rag", sql=True)
+    command.downgrade(config(down), "0003_context_rag:0002_context_library", sql=True)
+    command.upgrade(config(again), "0002_context_library:0003_context_rag", sql=True)
+    assert up.getvalue() == again.getvalue()
+    for name in ["context_indexes", "context_chunks"]:
+        assert f"CREATE TABLE {name}" in up.getvalue() and f"DROP TABLE {name}" in down.getvalue()
+    for name in ["context_documents", "users", "auth_sessions", "oauth_attempts"]:
+        assert f"DROP TABLE {name}" not in down.getvalue()
+    assert "DELETE FROM context_documents" not in up.getvalue()
+    assert "DROP EXTENSION" not in down.getvalue()

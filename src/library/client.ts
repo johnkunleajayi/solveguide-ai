@@ -1,7 +1,19 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { parseDocument, type DocumentDetail, type LibraryApi, type LibraryLimits } from './types'
+import { notifyLibraryChange } from './changes'
 
 const messages: Record<string, string> = {
+  context_consent_required: 'Explicit permission is required before selected document text is sent to OpenAI.',
+  context_changed: 'Selected materials changed. Refresh readiness and retry.',
+  index_busy: 'This document is already being indexed. Refresh readiness shortly.',
+  index_failed: 'Indexing could not complete. Retry explicitly.',
+  semantic_unavailable: 'Semantic retrieval is unavailable. Choose local lexical indexing.',
+  embedding_not_configured: 'Configure the backend embedding provider before semantic indexing.',
+  embedding_timeout: 'The embedding provider timed out. Retry indexing explicitly.',
+  embedding_authentication: 'The embedding provider rejected backend credentials.',
+  embedding_rate_limited: 'The embedding provider is busy. Retry later.',
+  embedding_unavailable: 'The embedding provider is unavailable. Retry later.',
+
   unsupported_document: 'Choose a PDF, DOCX or TXT document.',
   document_too_large: 'The selected document exceeds the upload limit.',
   extraction_limit: 'This document exceeds the extraction limit. Try a smaller document.',
@@ -13,7 +25,7 @@ const messages: Record<string, string> = {
   deletion_pending: 'This document is pending deletion. Retry deleting it.',
   request_timeout: 'The document transfer timed out. Try again.',
 }
-async function request(operation: object): Promise<unknown> {
+export async function request(operation: object): Promise<unknown> {
   if (!isTauri()) throw { code: 'desktop_required' }
   try {
     const response = await invoke<{ ok: boolean; status: number; data?: unknown; error?: { code?: string } }>('library_request', { operation })
@@ -39,6 +51,6 @@ export const libraryApi: LibraryApi = {
   async upload() { const raw = await request({ kind: 'upload' }); return raw === null ? null : detail(raw) },
   async paste(title, text) { return detail(await request({ kind: 'paste', title, text })) },
   async detail(id) { return detail(await request({ kind: 'detail', id })) },
-  async rename(id, title) { return detail(await request({ kind: 'rename', id, title })) },
-  async delete(id) { await request({ kind: 'delete', id }) },
+  async rename(id, title) { const result = detail(await request({ kind: 'rename', id, title })); notifyLibraryChange(id); return result },
+  async delete(id) { await request({ kind: 'delete', id }); notifyLibraryChange(id) },
 }

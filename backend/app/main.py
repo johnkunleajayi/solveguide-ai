@@ -26,6 +26,10 @@ from app.errors import VisionError
 from app.middleware import VisionRequestBoundary, error_response
 from app.providers.base import VisionProvider
 from app.providers.openai import OpenAIVisionProvider
+from app.rag.api import router as rag_router
+from app.rag.embedding import OpenAIEmbeddingProvider
+from app.rag.repository import RagRepository
+from app.rag.service import RagService
 from app.service import VisionService
 
 
@@ -61,6 +65,12 @@ def create_app(
     )
     app.state.vision_service = VisionService(provider or OpenAIVisionProvider(settings))
     app.state.answer_service = AnswerService(answer_provider or OpenAIAnswerProvider(settings))
+    app.state.rag_service = RagService(
+        RagRepository(database),
+        OpenAIEmbeddingProvider(settings),
+        app.state.answer_service,
+        settings,
+    )
     app.add_middleware(AuthBoundary)
     app.add_middleware(VisionRequestBoundary)
     app.add_middleware(
@@ -92,6 +102,7 @@ def create_app(
     app.include_router(router)
     app.include_router(answer_router)
     app.include_router(auth_router)
+    app.include_router(rag_router)  # /indexes must precede the UUID detail route.
     app.include_router(context_router)
     return app
 
