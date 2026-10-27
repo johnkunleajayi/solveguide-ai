@@ -1,0 +1,96 @@
+import asyncio
+
+import httpx
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    AuthenticationError,
+    RateLimitError,
+)
+from pydantic import ValidationError
+
+from app.answer.errors import AnswerError
+from app.answer.prompt import ANSWER_INSTRUCTIONS, answer_input
+from app.answer.schemas import AnswerRecommendation
+from app.config import Settings
+from app.schemas import QuestionObservation
+
+
+class OpenAIAnswerProvider:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    async def recommend(self, observation: QuestionObservation) -> AnswerRecommendation:
+        if not self.settings.provider_configured:
+            raise AnswerError(
+                "answer_not_configured",
+                "Set OPENAI_API_KEY in backend/.env, then restart the backend.",
+                503,
+            )
+        try:
+            async with (
+                AsyncOpenAI(
+                    api_key=self.settings.openai_api_key.get_secret_value(),
+                    base_url="https://api.openai.com/v1",
+                    max_retries=0,
+                    timeout=httpx.Timeout(self.settings.answer_timeout_seconds, connect=5),
+                ) as client,
+                asyncio.timeout(self.settings.answer_timeout_seconds),
+            ):
+                response = await client.responses.parse(
+                    model=self.settings.openai_answer_model,
+                    instructions=ANSWER_INSTRUCTIONS,
+                    input=[
+                        {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": answer_input(observation)}],
+                        }
+                    ],
+                    text_format=AnswerRecommendation,
+                    reasoning={"effort": self.settings.answer_reasoning_effort},
+                    max_output_tokens=self.settings.answer_max_output_tokens,
+                    store=False,
+                )
+            if response.status != "completed" or response.output_parsed is None:
+                raise AnswerError(
+                    "invalid_answer_response",
+                    "The provider did not return a complete recommendation. Please try again.",
+                )
+            # Return only validated public output, never response reasoning items or metadata.
+            return AnswerRecommendation.model_validate(response.output_parsed.model_dump())
+        except AnswerError:
+            raise
+        except (APITimeoutError, TimeoutError):
+            raise AnswerError(
+                "answer_timeout", "The suggested answer timed out. Please try again.", 504
+            ) from None
+        except AuthenticationError:
+            raise AnswerError(
+                "answer_authentication",
+                "The provider rejected backend credentials. Review backend configuration.",
+                503,
+            ) from None
+        except RateLimitError:
+            raise AnswerError(
+                "answer_rate_limited",
+                "The answer provider is busy or its quota is unavailable. Try again later.",
+                503,
+            ) from None
+        except APIConnectionError:
+            raise AnswerError(
+                "answer_unavailable",
+                "The backend could not reach the answer provider. Please try again.",
+                503,
+            ) from None
+        except APIStatusError:
+            raise AnswerError(
+                "answer_provider_error",
+                "The answer provider could not process this observation. Please try again.",
+            ) from None
+        except (ValidationError, ValueError, TypeError, AttributeError):
+            raise AnswerError(
+                "invalid_answer_response",
+                "The answer provider returned an invalid recommendation. Please try again.",
+            ) from None

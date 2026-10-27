@@ -28,7 +28,7 @@ export default function App() {
         </header>
         <main id="main" tabIndex={-1}>
           <AnswerWorkspace onCaptureModalChange={setCaptureOpen} />
-          <footer className="workspace-footer reveal"><span><span className="signal-dot" aria-hidden="true" />Question understanding · No answer generation</span><span>A little clarity changes everything.</span></footer>
+          <footer className="workspace-footer reveal"><span><span className="signal-dot" aria-hidden="true" />Capture · Understand · Recommend · Explain</span><span>A little clarity changes everything.</span></footer>
         </main>
       </div>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} theme={theme} setTheme={setTheme}

@@ -7,6 +7,11 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
 
+from app.answer.api import router as answer_router
+from app.answer.errors import AnswerError
+from app.answer.openai import OpenAIAnswerProvider
+from app.answer.provider import AnswerProvider
+from app.answer.service import AnswerService
 from app.api import router
 from app.config import ALLOWED_ORIGINS, Settings
 from app.errors import VisionError
@@ -16,7 +21,11 @@ from app.providers.openai import OpenAIVisionProvider
 from app.service import VisionService
 
 
-def create_app(settings: Settings | None = None, provider: VisionProvider | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    provider: VisionProvider | None = None,
+    answer_provider: AnswerProvider | None = None,
+) -> FastAPI:
     if settings is None:
         try:
             settings = Settings()
@@ -31,6 +40,7 @@ def create_app(settings: Settings | None = None, provider: VisionProvider | None
     )
     app.state.settings = settings
     app.state.vision_service = VisionService(provider or OpenAIVisionProvider(settings))
+    app.state.answer_service = AnswerService(answer_provider or OpenAIAnswerProvider(settings))
     app.add_middleware(VisionRequestBoundary)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     app.add_middleware(
@@ -46,12 +56,17 @@ def create_app(settings: Settings | None = None, provider: VisionProvider | None
     async def vision_error(_: Request, error: VisionError) -> JSONResponse:
         return error_response(error.code, error.message, error.status)
 
+    @app.exception_handler(AnswerError)
+    async def answer_error(_: Request, error: AnswerError) -> JSONResponse:
+        return error_response(error.code, error.message, error.status)
+
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_: Request, __: RequestValidationError) -> JSONResponse:
         # FastAPI's default includes the invalid input; it could be image data or sensitive text.
-        return error_response("invalid_request", "The image request is incomplete or invalid.", 422)
+        return error_response("invalid_request", "The request is incomplete or invalid.", 422)
 
     app.include_router(router)
+    app.include_router(answer_router)
     return app
 
 

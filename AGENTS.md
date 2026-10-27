@@ -6,15 +6,15 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 4
+## Current scope: Milestone 5
 
-SolveGuide captures and understands visible questions. It does NOT determine or
-recommend correct answers. Native Screen/Window capture and explicit Read Question
-are implemented. Region capture remains unavailable. The only intelligence stage
-is QuestionObservation via an explicit user-requested backend/provider call.
-Do not add answer generation/reasoning, local OCR, authentication, databases,
-Context Library, uploads, RAG, embeddings, vector search, payments, analytics,
-continuous capture or native capture exclusion in this milestone.
+SolveGuide CAPTURES, UNDERSTANDS, RECOMMENDS and EXPLAINS for learning and authorized
+practice. Preserve working native capture and separate vision extraction. Answers
+require an explicit Get Suggested Answer action on a validated QuestionObservation;
+never combine capture/vision/recommendation into an uncontrolled paid prompt.
+Region remains unavailable. Do not add authentication, databases, history, Context
+Library, uploads, RAG, embeddings, vector search, Session Preparation, payments,
+analytics, automatic/continuous capture or capture exclusion.
 
 Preserve the exact tagline: "Understand the question. Find the answer. Learn why."
 Preserve existing working capture, settings, keyboard and responsive behavior.
@@ -32,7 +32,9 @@ whitespace, options, context and uncertainty; never correctness highlights.
 - schemas/images: strict observation/request contracts and in-memory PNG validation;
 - providers/base: provider-independent VisionProvider protocol;
 - providers/openai: only implemented provider, official SDK Responses structured output;
-- service: orchestration, semantic output revalidation and sanitized failures;
+- service: vision orchestration, semantic output revalidation and sanitized failures;
+- answer/: separate AnswerProvider protocol, OpenAIAnswerProvider, centralized prompt,
+  strict AnswerRecommendation, deterministic AnswerService and POST /api/v1/answer;
 - api/main/middleware: application factory, DI, health, bounded request stream,
   exact browser origins/hosts, concurrency bound and safe JSON errors/logging.
 
@@ -56,7 +58,8 @@ Retake/Clear reset observations and abort requests; discard stale responses.
 Cancellation cannot promise a remote request already sent will stop or avoid costs.
 Only theme/pointer preferences persist. Keep capture-result and observation types
 separate for future stages. Pydantic remains authoritative; client guard fails closed.
-No schema answer/reasoning/correctness fields or UI recommendations are permitted.
+QuestionObservation remains neutral and rejects answer/reasoning/correctness fields.
+Recommendations belong only to the separate AnswerRecommendation contract and UI.
 
 ## Native and development invariants
 
@@ -109,3 +112,59 @@ Future region capture and supported native screen-share privacy belong behind
 Tauri/Rust boundaries, not CSS. No anti-proctoring, monitoring/detection evasion or
 security circumvention. Keep tokens and browser primitives reusable for a future
 web application without creating a separate web app now.
+
+## Milestone 5 answer invariants
+
+`AnswerProvider.recommend(QuestionObservation)` receives validated structured text,
+never CaptureResult/screenshots/paths/URLs. Keep OpenAI SDK calls in its adapter;
+Responses structured output, Pydantic revalidation, store=False, explicit timeouts
+and max_retries=0 are mandatory. Vision and answer models are independently configured.
+Current answer defaults: OPENAI_ANSWER_MODEL=gpt-5.4, ANSWER_REASONING_EFFORT=medium,
+ANSWER_MAX_OUTPUT_TOKENS=6000, ANSWER_TIMEOUT_SECONDS=60; see config.py bounds.
+Do not change the working vision model/settings as part of reasoning changes.
+
+AnswerRecommendation is strict and rejects extra/private reasoning fields. Preserve
+statuses answered/uncertain/insufficient_information/unsupported, matching question
+type, unique valid selected labels, nullable answer/boolean/code, concise explanation,
+up to eight key points, separate answer confidence and warnings. MCQ requires exactly
+one label; multiple-select requires the known count. Never silently repair invalid
+labels/counts/duplicates. True/false can use a boolean without artificial options.
+Essay/short answer/maths/code/mixed tasks use suitable plain-text/public educational
+explanation and typed escaped code, not fake option labels or executable HTML.
+Do not request, return, log or store private chain-of-thought or raw reasoning items.
+
+Incomplete/unclear/no-question observations, contradictory selection instructions,
+missing options and unknown types must fail closed with deterministic abstentions
+where supported. Insufficient/unsupported responses contain no answer/selections/code,
+key points or confidence beyond zero and must explain the limitation. Uncertain
+recommendations need warnings and still obey any selection constraints.
+
+Reading confidence describes extraction; answer confidence describes recommendation
+correctness. Never copy one to the other or imply calibrated certainty. Observation
+options stay neutral. Recommended labels and emphasis belong in AnswerRecommendationView.
+
+`src/answer` owns typed text-only HTTP, runtime checks and cancellable request state.
+No automatic request after reading, effect-triggered paid call or automatic retry.
+Block double submission during loading. Try Again is an explicit paid attempt.
+Retake/Change Source/Clear/new observation synchronously invalidate answers, abort
+client transport and ignore stale replies. Changing source invalidates even if
+selection is subsequently cancelled. Preserve cleanup of subscriptions/abort handles.
+A request already accepted by the provider may finish and incur charges after cancel.
+
+The answer endpoint accepts only QuestionObservation JSON; enforce its 256 KiB
+streamed-body limit and existing exact Origin/host rules. Share one in-flight slot
+with vision to limit concurrent paid requests. Do not weaken image validation, CORS,
+CSP or native permissions. Never persist screenshots/answers, add history/database,
+or log sensitive question/answer/provider payloads. Only allowlisted request metadata
+may be logged. All secrets stay in the ignored backend .env.
+
+Rerun existing/new frontend, Ruff/pytest and Rust fmt/check/Clippy/tests. Automated
+provider tests remain mocked. One controlled live reasoning attempt is allowed only
+with configured credentials and a confirmed harmless practice observation. Do not
+repeat paid calls just for testing. Prior successful vision testing is not proof of
+answer quality. If a browser URL cannot be verified by Computer Use, stop browser
+control and hand off exact native/live steps; never bypass the limitation.
+
+README contains the contract, supported types, privacy, cost controls and future
+selected-context boundary. Keep future Context Library/RAG/materials modes/session
+preparation documented only. Do not proceed beyond Milestone 5 or commit/push.

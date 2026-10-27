@@ -1,0 +1,26 @@
+import type { QuestionObservation } from '../vision/types'
+import type { AnswerState } from '../answer/controller'
+export function AnswerRecommendationView({ state, observation, onRequest, onCancel, enabled }: { state: AnswerState; observation: QuestionObservation | null; onRequest: () => void; onCancel: () => void; enabled: boolean }) {
+  const answer = state.result
+  const abstained = answer?.status === 'insufficient_information' || answer?.status === 'unsupported'
+  return <section className="recommendation-area" aria-labelledby="recommendation-title">
+    <header className="section-heading"><h2 id="recommendation-title"><span className="section-index" aria-hidden="true">03</span>{answer?.question_type === 'essay' ? 'Suggested response' : 'Suggested answer'}</h2><span className="eyebrow">WHAT WE RECOMMEND</span></header>
+    <div className="recommendation-content">
+      {state.phase === 'idle' && <p>Ready when you are. Request a recommendation from the observed question.</p>}
+      {state.phase === 'loading' && <div role="status" aria-live="polite"><span className="eyebrow">PREPARING A RECOMMENDATION</span><p>Considering the observed question. Your screenshot is not sent again.</p><button className="button" onClick={onCancel}>Cancel recommendation</button></div>}
+      {state.error && <p role="alert" className="capture-error">{state.error.message}</p>}
+      {answer && <>
+        <p className="eyebrow" role="status">{answer.status === 'uncertain' ? 'TENTATIVE · REVIEW CAREFULLY' : answer.status === 'insufficient_information' ? 'MORE INFORMATION NEEDED' : answer.status === 'unsupported' ? 'UNSUPPORTED QUESTION' : 'SUGGESTED RESPONSE'}</p>
+        {answer.selected_options.length > 0 && <ul className="recommended-options" aria-label="Recommended options">{answer.selected_options.map(label => <li key={label}><strong>{label}</strong><span>{observation?.options.find(option => option.label === label)?.text}</span></li>)}</ul>}
+        {answer.true_false_answer !== null && <p className="answer-direct">{answer.true_false_answer ? 'True' : 'False'}</p>}
+        {answer.answer_text && <p className="answer-direct">{answer.answer_text}</p>}
+        {answer.code_answer && <pre className="answer-code" aria-label={`Suggested ${answer.code_answer.language ?? ''} code`}><code>{answer.code_answer.code}</code></pre>}
+        <div className="recommendation-explanation"><h3>{abstained ? 'What to review' : answer.question_type === 'mathematics' ? 'Explanation / key steps' : 'Why'}</h3><p>{answer.explanation}</p>{answer.key_points.length > 0 && <ol>{answer.key_points.map((point, i) => <li key={i}>{point}</li>)}</ol>}</div>
+        {!abstained && <p className="answer-confidence">Answer confidence · {Math.round(answer.confidence * 100)}%</p>}
+        {answer.warnings.length > 0 && <section className="observation-warnings" aria-label="Answer warnings"><h4>Review notes</h4><ul>{answer.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul></section>}
+      </>}
+      {state.phase !== 'loading' && <button className="button button-primary" disabled={!enabled} onClick={onRequest}>{state.phase === 'idle' ? 'Get Suggested Answer' : 'Try Again'}</button>}
+      <p className="capture-privacy">Each request sends the structured observation to the answer provider and may incur API charges. Answer confidence is separate from reading confidence; both are estimates.</p>
+    </div>
+  </section>
+}

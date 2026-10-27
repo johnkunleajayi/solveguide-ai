@@ -2,10 +2,11 @@
 
 Understand the question. Find the answer. Learn why.
 
-SolveGuide can currently **CAPTURE and UNDERSTAND a question** when its local
-backend and vision provider are configured. It does **not** yet determine or
-recommend the correct answer. Milestone 4 stops at a structured question observation.
-Real-provider accuracy still requires a controlled live test with a configured key.
+SolveGuide can **CAPTURE -> UNDERSTAND -> RECOMMEND -> EXPLAIN** when its local
+backend and configured providers are available. Milestone 5 adds an explicit,
+structured educational recommendation from QuestionObservation. Vision extraction
+and answering remain separate operations; neither paid stage runs automatically.
+Recommendations and confidence are estimates, not guarantees of correctness.
 
 ## Canonical workspace
 
@@ -76,11 +77,17 @@ Windows Graphics Capture / Direct3D11
   -> Rust capture module -> typed CaptureResult -> React capture preview
   -> explicit Read Question -> local FastAPI -> VisionService
   -> VisionProvider -> OpenAIVisionProvider -> QuestionObservation -> desktop UI
+  -> explicit Get Suggested Answer -> AnswerService -> AnswerProvider
+  -> OpenAIAnswerProvider -> AnswerRecommendation -> suggested answer + explanation
 ```
 
 - `src/App.tsx`: shell, modal visibility, theme and pointer preferences.
 - `src/capture/`: existing native capture contract, adapter and state machine.
 - `src/vision/`: observation types/runtime guard, HTTP client and cancellable state.
+- `src/answer/`: answer contract/runtime validation, text-only HTTP client, request state
+  and synchronous capture/observation lifecycle invalidation.
+- `AnswerRecommendationView.tsx`: separate recommended options/response, explanation,
+  answer confidence, warnings and explicit request/retry/cancel controls.
 - `CaptureDialog.tsx`, `CapturePreview.tsx`: selection, preview and explicit reading action.
 - `QuestionObservationView.tsx`: prompt, instructions, options, context, visuals and warnings.
 - `src/styles/`: Neutral Light tokens and focused, reusable presentation styles.
@@ -94,9 +101,11 @@ Windows Graphics Capture / Direct3D11
 - `backend/app/api.py`, `middleware.py`, `main.py`: routes, request bounds, origins,
   dependency injection, safe error envelopes and application factory.
 
-The provider contract supports future local/multimodal alternatives without coupling
-routes or React to OpenAI. Only OpenAI is implemented. No database, microservice,
-OCR engine, retrieval, authentication, answer generation or reasoning stage exists.
+The provider contracts support future alternatives without coupling routes or React
+to OpenAI. Only OpenAI is implemented. `backend/app/answer/` contains separate
+schemas, provider protocol, centralized prompt, OpenAI adapter, deterministic service
+and API route. No database, microservice, OCR engine, retrieval, authentication,
+Context Library or history is implemented.
 
 ## Capture and Read Question
 
@@ -270,7 +279,8 @@ including negative origins. Protected/elevated/special/minimized windows may fai
 or appear blank. SDR capture has no HDR tone mapping. Region selection remains
 unimplemented and must not be faked. This milestone does not change native capture.
 Vision may misread text, symbols, layout or selection counts: review warnings and the
-original image. General reasoning and answer generation remain outside the pipeline.
+original image. Recommendations use the observation and general knowledge; selected-material
+reasoning modes and retrieval remain outside this milestone.
 
 ### Reusable Context Library and Session Preparation (not implemented)
 
@@ -294,20 +304,169 @@ No capture exclusion is implemented. The eventual web experience may reuse visua
 tokens, observation presentation and browser interaction primitives; no separate
 web application is created here.
 
-### Milestone 4 verification handoff
+### Previous milestone verification
 
-Automated checks: 42 backend tests, 25 frontend tests and five preserved Rust tests
-pass. Ruff lint/format, ESLint, TypeScript, frontend production build, Cargo
-format/check and Clippy with warnings denied pass. The setup command and real
-FastAPI startup/health were verified. Real local HTTP verified PNG receipt with
-a safe missing-key error, invalid-image rejection and exact-origin CORS preflight.
-Vite's actual watch inventory excludes src-tauri, .tools and .cache; the native
-capture code and watcher configuration are unchanged. No EBUSY was observed.
+The user reports Milestones 3 and 4 manually validated, committed and pushed,
+including native capture -> FastAPI -> live OpenAI vision -> a complete practice
+MCQ with four options, Select 1, relevant context and 95% extraction confidence.
+That test did not generate an answer. Milestone 5 live reasoning is a separate check;
+prior vision success does not establish answer-provider accuracy.
 
-The native app recompiled, launched and initially rendered the new workspace.
-Remaining native capture/Read Question, observation rendering, error/theme/pointer
-and compact-window interaction checks were handed to the user at their request.
-No live OpenAI request ran: OPENAI_API_KEY was not configured. Automated provider
-responses and SDK transports were mocked, not evidence of real visual extraction.
-One test-only Starlette/httpx TestClient deprecation warning remains; tests pass.
-No screenshot history, image files, database or answer generation was introduced.
+## Milestone 5: structured educational recommendations
+
+### Separate answer architecture
+
+VisionProvider answers "What is the question?" and continues to return only
+QuestionObservation. AnswerProvider answers "What is the best response, and why?"
+from that validated observation. The normal reasoning request contains no screenshot,
+CaptureResult, image bytes, file path or remote image URL. There is no combined
+vision-and-answer prompt and no automatic answer request when reading completes.
+
+`AnswerProvider.recommend(QuestionObservation)` is a provider-independent protocol.
+`OpenAIAnswerProvider` uses the official async SDK Responses API with strict Pydantic
+structured output, validates it again, and exposes only the public recommendation.
+`AnswerService` gates inadequate input and applies deterministic cross-validation
+against the original observation. Routes depend on the service/provider boundary;
+React never imports the SDK or accesses credentials. This remains one FastAPI
+modular monolith, not another service.
+
+Files are grouped under `backend/app/answer/`: `provider.py`, `openai.py`, `prompt.py`,
+`schemas.py`, `service.py`, `api.py`, `errors.py`. Existing capture and vision modules
+remain in place. `src/answer/` contains the matching typed client/controller and
+runtime guard; `src/styles/answer.css` composes existing design tokens.
+
+### Answer endpoint and contract
+
+`POST /api/v1/answer` accepts the QuestionObservation object directly as its JSON
+body, not a wrapper and not a screenshot. Unknown input fields (including image
+payloads) fail validation. It shares the existing loopback, Origin, host, no-store,
+structured-error and sanitized-logging boundaries. The streamed answer body is
+bounded to 256 KiB. Vision retains its existing PNG/14 MiB body limits. A single
+shared in-flight slot prevents overlapping paid vision/answer operations.
+
+Strict `AnswerRecommendation` fields:
+
+| Field | Meaning |
+| --- | --- |
+| status | answered, uncertain, insufficient_information or unsupported |
+| question_type | Must match the input QuestionObservation type |
+| selected_options | Unique existing option labels, never invented IDs |
+| answer_text | Nullable concise direct answer/thesis/response, plain text |
+| true_false_answer | Nullable boolean for natural true/false responses |
+| code_answer | Nullable typed language/code block preserving whitespace |
+| explanation | Concise public educational rationale, not private chain-of-thought |
+| key_points | Up to eight concise supporting points or public calculation steps |
+| confidence | Answer confidence in [0,1], independent from extraction confidence |
+| warnings | Ambiguity, limitations or reasons to review/abstain |
+
+Unknown output fields, duplicates, blank response text and inconsistent abstentions
+are rejected. The service rejects mismatched question types, nonexistent labels,
+wrong selection counts and inconsistent true/false labels/booleans. Invalid results
+become structured errors; there is no silent count/label correction and no automatic
+paid retry. The client also validates the response before rendering it.
+
+### Question-type behavior and uncertainty
+
+- MCQ: exactly one observed label, a direct response and useful explanation. A
+  contradictory known selection count causes an insufficient-information result.
+- Multiple-select: existing unique labels and the exact required count when known.
+  An unknown count stays unknown; no artificial single-choice limit is imposed.
+- True/false: a clear boolean without requiring artificial A/B options. When visible
+  choices exist, their selected label must be valid and agree with recognizable
+  True/False text.
+- Short answer: direct response first, then concise explanation.
+- Essay: a concise thesis/response and supporting points, with no meaningless labels
+  or enormous essay by default.
+- Mathematics: a clear final result and concise educational explanation/key steps,
+  preserving notation. No hidden reasoning traces are requested, returned or stored.
+- Code: actual question/language context comes from the observation; typed code blocks
+  preserve indentation. Provider HTML is escaped text and is never executed.
+- Mixed: uses all structured prompt/context/visual descriptions; missing necessary
+  information should produce insufficient_information rather than invented content.
+- Unknown: deterministic unsupported status without a provider call.
+
+No-question, unclear or missing prompt input, contradictory single-choice selection
+instructions, and inadequate visible options produce deterministic abstentions
+without paid requests. Uncertain provider responses require warnings; a tentative
+selection still must satisfy label/count validation. Insufficient/unsupported results
+contain no answer, selections, code, key points or answer confidence (confidence=0).
+
+Reading/extraction confidence estimates what was seen. Answer confidence estimates
+correctness of the recommendation. The observation and recommendation remain distinct
+UI sections; neutral observed options are not overwritten or highlighted as correct.
+Percentages can coincidentally match, but are separate values and are not statistically
+calibrated probabilities. High extraction confidence does not prove answer correctness.
+
+### Explicit requests, state and presentation
+
+Capture -> Read Question -> review QuestionObservation -> **Get Suggested Answer**.
+The answer is visually emphasized above its explanation. Multiple-select shows all
+recommended labels; essay shows Suggested response; math shows explanation/key steps;
+code uses an accessible escaped code block. Warnings/abstentions are visible states.
+
+Get Suggested Answer is enabled only after a ready observation with a capture preview.
+Each intentional click can incur provider charges. Loading blocks duplicate submission;
+Cancel recommendation aborts client transport and ignores late responses. **Try Again**
+is a new explicit attempt after a failure or an existing recommendation. It is not an
+automatic retry. SDK retries are disabled. Cancelling a request already received by
+OpenAI cannot guarantee cancellation or avoid charges.
+
+Retake, Change Source, Clear and reading a new observation synchronously invalidate
+recommendations and abort pending answer requests. Opening Change Source invalidates
+an answer even when its old capture remains available or selection is cancelled.
+Generation guards prevent an old response from reappearing against a new question.
+Cleanup releases listeners and current in-memory state; no answer history is retained.
+
+### Independent answer configuration
+
+The existing vision settings are unchanged. Answer settings use backend environment
+configuration, with defaults also listed in `backend/.env.example`:
+
+| Variable | Default / bounds |
+| --- | --- |
+| OPENAI_ANSWER_MODEL | gpt-5.4; independently configurable from OPENAI_VISION_MODEL |
+| ANSWER_TIMEOUT_SECONDS | 60 seconds; 1-90 |
+| ANSWER_MAX_OUTPUT_TOKENS | 6000; 1024-12000, including provider reasoning/output budget |
+| ANSWER_REASONING_EFFORT | medium; none, low, medium or high for compatible models |
+
+GPT-5.4 is the documented quality-oriented answer default. A replacement model must
+support the configured Responses/structured-output/reasoning parameters. Defaults use
+medium reasoning effort with a bounded budget and timeout; no chain-of-thought summary
+or private trace is requested. Prompt construction is centralized in `prompt.py`:
+respect type/count, use only the supplied task observation plus general knowledge,
+admit missing information, return concise public explanation, and never claim external
+materials/web verification were supplied. No tools or retrieval are added.
+
+`OPENAI_API_KEY` stays backend-only and shared with the independent vision provider.
+Missing credentials, authentication/quota/connectivity/timeouts, malformed output and
+selection errors use safe structured errors. No key is hard-coded or bundled into
+React/Rust. Images are not resent for answers, and neither question nor answer payloads
+are logged. Answer logs contain only event/request ID, outcome and duration. Keep
+`store=False`; existing provider-retention caveats still apply. No database/history,
+authentication, Context Library, RAG, uploads, region capture or analytics is introduced.
+
+### Controlled live reasoning check and manual fallback
+
+After automated validation, use one harmless practice question in the native app:
+
+1. Run `npm.cmd run backend` and `npm.cmd run desktop` from the canonical workspace
+   if they are not already running. Confirm `/api/health` is available.
+2. Capture the intended practice window and click Read Question once. Confirm the
+   complete prompt, option labels/text and required selection count before continuing.
+3. Note reading confidence, then click **Get Suggested Answer once**. Wait without
+   pressing Try Again; record the recommendation or structured error.
+4. Verify one valid selection for MCQ (or the known multiple-select count), a useful
+   explanation and separately labelled answer confidence. The neutral observation
+   must remain unchanged. No screenshot is part of the answer request body.
+5. Retake, Change Source, Clear or re-read to check immediate answer invalidation.
+   Check cancellation during a request only if another intentional attempt is desired;
+   repeated paid attempts are not required for verification and are not automated.
+6. Review dark/light/System, pointer, keyboard focus, compact window/vertical scrolling
+   and browser console behavior without exposing credentials or sensitive payloads.
+
+If Computer Use cannot safely access a browser's current URL, stop browser automation.
+Do not bypass that guard through another browser-control mechanism. Leave the live
+UI check pending for the user rather than reporting mocked tests as live success.
+Future selected-context input belongs beside QuestionObservation at the service boundary;
+Context Library, RAG, Context Guided/Materials Only modes and Session Preparation remain
+unimplemented, as described above.

@@ -7,12 +7,19 @@ import { CapturePreview } from './CapturePreview'
 import { createObservationController } from '../vision/controller'
 import { readQuestion } from '../vision/client'
 import { QuestionObservationView } from './QuestionObservationView'
+import { createAnswerController, connectAnswerLifecycle } from '../answer/controller'
+import { getSuggestedAnswer } from '../answer/client'
+import { AnswerRecommendationView } from './AnswerRecommendationView'
 
 export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange: (open: boolean) => void }) {
   const [controller] = useState(() => createCaptureController(nativeCapture))
   const capture = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const [observationController] = useState(() => createObservationController(readQuestion))
   const observation = useSyncExternalStore(observationController.subscribe, observationController.getSnapshot)
+  const [answerController] = useState(() => createAnswerController(getSuggestedAnswer))
+  const answer = useSyncExternalStore(answerController.subscribe, answerController.getSnapshot)
+  useEffect(() => connectAnswerLifecycle(answerController, controller, observationController), [answerController, controller, observationController])
+  const requestAnswer = () => { if (observation.observation) void answerController.request(observation.observation) }
   useEffect(() => {
     observationController.reset()
     return () => observationController.reset()
@@ -61,10 +68,7 @@ export function AnswerWorkspace({ onCaptureModalChange }: { onCaptureModalChange
             <span className="state-label">{observation.phase === 'ready' ? 'Read' : observation.phase === 'reading' ? 'Reading' : 'Not read'}</span>
           </header>
           <QuestionObservationView state={observation} onRetry={readCapture} onCancel={() => observationController.reset()} />
-          <section className="explanation-area" aria-labelledby="explanation-title">
-            <h2 id="explanation-title"><span className="section-index" aria-hidden="true">03</span>Answer generation</h2>
-            <p>SolveGuide does not yet determine or recommend the correct answer.</p>
-          </section>
+          <AnswerRecommendationView state={answer} observation={observation.observation} onRequest={requestAnswer} onCancel={() => answerController.reset()} enabled={observation.phase === 'ready' && capture.phase === 'preview'} />
         </section>
 
         <aside className="context-strip" aria-label="Context status">

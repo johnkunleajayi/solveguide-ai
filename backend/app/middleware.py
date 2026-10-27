@@ -27,9 +27,19 @@ class VisionRequestBoundary:
                 message["headers"] = [*message.get("headers", []), (b"cache-control", b"no-store")]
             await send(message)
 
-        if scope["method"] != "POST" or scope["path"] != "/api/v1/vision/question":
+        if scope["method"] != "POST" or scope["path"] not in (
+            "/api/v1/vision/question",
+            "/api/v1/answer",
+        ):
             await self.app(scope, receive, no_store)
             return
+        is_answer = scope["path"] == "/api/v1/answer"
+        limit = 256 * 1024 if is_answer else MAX_BODY_BYTES
+        limit_message = (
+            "Observation exceeds the 256 KiB limit."
+            if is_answer
+            else "Request exceeds the 14 MiB limit."
+        )
         headers = dict(scope["headers"])
         origin = headers.get(b"origin", b"").decode("latin-1")
         if origin not in ALLOWED_ORIGINS:
@@ -38,9 +48,11 @@ class VisionRequestBoundary:
             )(scope, receive, no_store)
             return
         if headers.get(b"content-type", b"").split(b";")[0].strip().lower() != b"application/json":
-            await error_response("invalid_request_type", "Send the captured PNG as JSON.", 415)(
-                scope, receive, no_store
-            )
+            await error_response(
+                "invalid_request_type",
+                "Send the observation as JSON." if is_answer else "Send the captured PNG as JSON.",
+                415,
+            )(scope, receive, no_store)
             return
         try:
             length = int(headers.get(b"content-length", b"0"))
@@ -51,14 +63,14 @@ class VisionRequestBoundary:
                 scope, receive, no_store
             )
             return
-        if length > MAX_BODY_BYTES:
-            await error_response("request_too_large", "Request exceeds the 14 MiB limit.", 413)(
-                scope, receive, no_store
-            )
+        if length > limit:
+            await error_response("request_too_large", limit_message, 413)(scope, receive, no_store)
             return
         if self.slot.locked():
             await error_response(
-                "vision_busy", "Another question is being read. Please try again shortly.", 503
+                "answer_busy" if is_answer else "vision_busy",
+                "Another AI request is running. Please try again shortly.",
+                503,
             )(scope, receive, no_store)
             return
         async with self.slot:
@@ -70,10 +82,10 @@ class VisionRequestBoundary:
                         if message["type"] == "http.disconnect":
                             return
                         chunk = message.get("body", b"")
-                        if len(body) + len(chunk) > MAX_BODY_BYTES:
-                            await error_response(
-                                "request_too_large", "Request exceeds the 14 MiB limit.", 413
-                            )(scope, receive, no_store)
+                        if len(body) + len(chunk) > limit:
+                            await error_response("request_too_large", limit_message, 413)(
+                                scope, receive, no_store
+                            )
                             return
                         body.extend(chunk)
                         if not message.get("more_body", False):
