@@ -32,7 +32,7 @@ function Application() {
       <div className="main-shell">
         <header className="topbar">
           <span className="breadcrumb">{authenticated ? <><span>Workspace</span><span aria-hidden="true">/</span>{libraryOpen ? 'Context Library' : 'Overview'}</> : <span>SolveGuide AI · Account access</span>}</span>
-          <div className="topbar-actions"><span className="preview-label">DESKTOP PREVIEW</span>
+          <div className="topbar-actions"><span className="preview-label">DESKTOP WORKSPACE</span>
             <button className="icon-button" aria-label="Open settings" title="Settings" onClick={() => setSettingsOpen(true)}>
               <Settings2 size={18} aria-hidden="true" />
             </button>

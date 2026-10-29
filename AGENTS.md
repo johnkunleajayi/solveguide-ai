@@ -6,7 +6,29 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 10
+## Current scope: Milestone 11C public website
+
+Stage 11A adds shared brand tokens and an isolated development showcase only.
+Follow `brand/README.md` and `brand/tokens.css`: exact charcoal `#0B0E0D`, white
+`#FFFFFF`, mint `#A3FFCF`, green `#55E6A5`, sage `#9AADA1`. Use semantic theme
+roles rather than raw pale accents for text on white. Keep accessible focus,
+reduced-motion and forced-colours fallbacks. No remote fonts/assets or new logo.
+The desktop compatibility bridge may adopt these colours while keeping component
+structure and layout stable. `brand.html` / `src/brand` remain separate from
+`src/main.tsx`, production navigation and application preferences. Do not create
+new functional systems for brand work. Stage 11C is now authorized only inside
+`website/`: an independent Next.js App Router public information site with its own
+dependencies/configuration. Follow `website/README.md`. Import shared brand CSS,
+not desktop/backend modules or secrets. Preserve all uncommitted 11A/11B changes.
+Keep downloads Coming Soon until a signed installer and verified URL exist. No
+website auth, AI calls, analytics, email collection, billing or deployment.
+Stage 11B refines the existing desktop components/styles using this same token
+source. Preserve the combined uncommitted 11A/11B work. See `brand/DESKTOP.md` for
+presentation scope and manual review. Materials/consent use a native HTML details
+disclosure while reasoning mode controls remain visible. Never change consent,
+request or auth semantics merely to simplify the presentation. Presentation tests
+use synthetic offline states; they are not proof of live/native workflows.
+All completed milestone invariants below remain mandatory.
 
 SolveGuide CAPTURES, UNDERSTANDS, RECOMMENDS and EXPLAINS for learning and authorized
 practice. Preserve working native capture and separate vision extraction. Answers
@@ -93,7 +115,7 @@ Use scripts rather than creating global Python or Rust state outside the workspa
 
 ## Design and interaction system
 
-Preserve the black/white Neutral Light identity and semantic CSS tokens. Dark is
+Preserve the approved charcoal/white/mint/green/sage identity and semantic CSS tokens. Dark is
 signature, light intentional, System persisted. Keep typography readable, luminous
 motion restrained, and source/observation layouts usable at the 640 x 560 client
 minimum with natural vertical scrolling and no horizontal overflow.
@@ -180,7 +202,7 @@ control and hand off exact native/live steps; never bypass the limitation.
 
 README contains the contract, supported types, privacy, cost controls and future
 selected-context boundary. Context Library management is now implemented separately; implement RAG/materials modes only within Milestone 10; keep session preparation
-documented only. Do not proceed beyond Milestone 10 or commit/push.
+documented only. Do not add functional milestones during Stage 11A/11B or commit/push.
 
 ## Milestone 6 platform invariants
 
@@ -386,4 +408,5 @@ on changes/logout/expiry. Keep late index/answer/catalog results from restoring 
 state. Selected documents beyond the first page must remain correctly represented.
 Keep library source links, themes, keyboard/focus, compact layout, Pointer Light and
 screen-share privacy. All live learning content stays ephemeral; no session/history,
-telemetry, monetization, OCR or account-wide auto-retrieval. Stop at Milestone 10.
+telemetry, monetization, OCR or account-wide auto-retrieval. Preserve these RAG
+boundaries during Stage 11A/11B; do not introduce a new functional milestone.

@@ -24,7 +24,7 @@ const deferred = () => { let resolve; const promise = new Promise(yes => { resol
 
 test('app-level gate never mounts core controls before valid auth and keeps local Settings available', () => {
   let current; let mounts = 0
-  const { AuthGate } = compile('components/AuthGate.tsx', { '../auth/controller': logic, './AccountPanel': { AccountPanel: () => React.createElement('button', null, 'Sign in with Google') } })
+  const { AuthGate } = compile('components/AuthGate.tsx', { '../auth/controller': logic, './AccountPanel': { AccountPanel: () => React.createElement('button', null, 'Sign in with Google') }, './Brand': compile('components/Brand.tsx') })
   const App = compile('App.tsx', {
     './auth/context': { AuthProvider: ({ children }) => children, useAuth: () => ({ state: current }) },
     './auth/controller': logic, './components/AuthGate': { AuthGate },

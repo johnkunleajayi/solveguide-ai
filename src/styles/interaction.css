@@ -7,8 +7,8 @@
 .reveal { animation: content-arrive var(--duration-reveal) var(--ease-cinematic) both; }
 .workbench.reveal { animation-delay: 70ms; }
 .workspace-footer.reveal { animation-delay: 130ms; }
-.luminous-text { animation: light-pass 18s ease-in-out infinite; }
-.main-shell::before { animation: ambient-drift 26s ease-in-out infinite alternate; }
+.luminous-text { background-position: 50% 50%; }
+
 .settings-dialog[open] { animation: dialog-arrive 240ms var(--ease-cinematic) both; }
 .workbench::before {
   content: ''; position: absolute; pointer-events: none; z-index: 0; top: 0; left: 0;
@@ -32,8 +32,8 @@
   .pointer-light[data-visible="true"], .workbench[data-lit="true"]::before { will-change: transform; }
 }
 @keyframes content-arrive { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes light-pass { 0%, 25%, 100% { background-position: 0% 50%; } 65% { background-position: 100% 50%; } }
-@keyframes ambient-drift { from { transform: translateY(0); } to { transform: translateY(18px); } }
+
+
 @keyframes dialog-arrive { from { opacity: 0; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
@@ -47,3 +47,7 @@
   .button, .nav-item.active, .switch { border: 1px solid ButtonText; }
   .theme-option:has(input:checked) { outline: 1px solid Highlight; }
 }
+
+:where(.library-document, .reasoning-modes label, .source-option, .capture-type) { transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { :where(.library-document, .reasoning-modes label, .source-option, .capture-type) { transition: none; } }
+@media (forced-colors: active) { :where(.capture-type, .source-option, .reasoning-modes label, .library-document, .theme-option, .privacy-settings, .grounding-sources details) { border-color: ButtonText; }:where(.capture-type[data-selected="true"], .source-option[data-selected="true"], .reasoning-modes label:has(input:checked), .library-document[aria-pressed=true]) { outline: 1px solid Highlight; }:focus-visible { outline-color: Highlight; } }

@@ -1,8 +1,15 @@
 .auth-app-shell { min-height: 100dvh; }
 .auth-app-shell .main-shell { margin: 0; }
-.sign-in-shell { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); align-items: center; gap: var(--space-16); min-height: 65dvh; padding-block: var(--space-12); }
-.sign-in-brand h1 { font-family: var(--font-display); font-size: clamp(2.25rem, 4vw, 4.25rem); font-weight: 500; line-height: 1.12; letter-spacing: var(--tracking-display); margin-block: var(--space-6); }
+.sign-in-shell { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); align-items: center; gap: var(--space-16); min-height: 65dvh; padding-block: var(--space-8); }
+.sign-in-brand h1 { font-family: var(--font-display); font-size: clamp(2.25rem, 4vw, 4.25rem); font-weight: 600; line-height: 1.12; letter-spacing: var(--tracking-display); margin-block: var(--space-6); }
 .sign-in-brand > p { max-width: 42ch; line-height: var(--line-body); }
-.sign-in-card { min-width: 0; padding: var(--space-8); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface-gradient); }
+.sign-in-card { min-width: 0; padding: var(--space-8); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface-gradient), var(--surface); box-shadow: var(--shadow-surface); }
 .sign-in-card .account-panel { border: 0; padding: 0; margin: 0 0 var(--space-6); }
 @media (max-width: 900px) { .sign-in-shell { grid-template-columns: minmax(0, 1fr); gap: var(--space-8); min-height: auto; } .sign-in-card { padding: var(--space-6); } }
+
+.sign-in-brand .brand { padding: 0; margin-bottom: var(--space-10); }
+.sign-in-card { border-top: 2px solid var(--sg-accent); }
+.sign-in-card .account-panel h3 { font-size: var(--sg-type-title); font-weight: 600; letter-spacing: -.025em; }
+.sign-in-card .button-primary { width: 100%; }
+.sign-in-card .account-panel { font-size: var(--text-body); }
+@media (max-width: 900px) { .sign-in-shell { padding-block: var(--space-4); }.sign-in-brand .brand { margin-bottom: var(--space-6); }.sign-in-brand h1 { font-size: var(--sg-type-title); line-height: 1.2; }.sign-in-brand h1 br { display: none; } }

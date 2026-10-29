@@ -3,7 +3,7 @@ import type { AnswerState } from '../answer/controller'
 export function AnswerRecommendationView({ state, observation, onRequest, onCancel, enabled, onOpenDocument }: { state: AnswerState; observation: QuestionObservation | null; onRequest: () => void; onCancel: () => void; enabled: boolean; onOpenDocument?: (id: string) => void }) {
   const answer = state.result
   const abstained = answer?.status === 'insufficient_information' || answer?.status === 'unsupported'
-  return <section className="recommendation-area" aria-labelledby="recommendation-title">
+  return <section className="recommendation-area" data-status={answer?.status ?? state.phase} aria-labelledby="recommendation-title">
     <header className="section-heading"><h2 id="recommendation-title"><span className="section-index" aria-hidden="true">03</span>{answer?.question_type === 'essay' ? 'Suggested response' : 'Suggested answer'}</h2><span className="eyebrow">WHAT WE RECOMMEND</span></header>
     <div className="recommendation-content">
       {state.phase === 'idle' && <p>Ready when you are. Request a recommendation from the observed question.</p>}

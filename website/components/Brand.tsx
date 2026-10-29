@@ -1,0 +1,2 @@
+import Link from 'next/link'
+export function Brand() { return <Link href="/" className="brand" aria-label="SolveGuide AI home"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M25 6H13a6 6 0 0 0 0 12h6a4 4 0 0 1 0 8H7" stroke="currentColor" strokeWidth="2.3"/><path d="M23 26h3M6 6h3" stroke="currentColor" strokeWidth="2.3" opacity=".4"/></svg><span>SolveGuide<sup>AI</sup></span></Link> }

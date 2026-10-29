@@ -244,8 +244,17 @@ Official references:
 
 ## Visual/accessibility foundation
 
-Preserve the black-and-white Neutral Light identity: near-black/charcoal signature
-dark mode, independently designed off-white/ink light mode, persisted System mode.
+Stage 11A establishes the approved charcoal/white/mint/green/sage brand foundation:
+signature dark mode, independently designed off-white/ink light mode, persisted System mode.
+The framework-independent tokens, usage rules and development-only showcase are
+documented in [brand/README.md](brand/README.md). From this directory, run
+`npm.cmd run dev` and open `http://127.0.0.1:1420/brand.html` to inspect both themes.
+The showcase has no application navigation entry, account/provider requests or
+appearance persistence. The normal production build excludes it. Stage 11B now
+refines the desktop presentation using these same tokens; see
+[desktop refinement and review](brand/DESKTOP.md). Milestone 11C adds the independent public
+website under `website/`; see [website setup and deployment boundaries](website/README.md).
+Authentication, capture, retrieval and provider contracts remain intact.
 Tokens own colors, type, spacing, borders, focus, shadows and restrained luminous
 motion. System fonts and frontend primitives remain reusable within the desktop product.
 

@@ -60,7 +60,7 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
       <section className="workspace-intro reveal" aria-labelledby="workspace-title">
         <div className="intro-copy">
           <span className="eyebrow"><span className="signal-dot" aria-hidden="true" />LEARNING, IN FOCUS</span>
-          <h1 id="workspace-title">Understanding,<br /><span className="luminous-text">illuminated.</span></h1>
+          <h1 id="workspace-title">Understanding,<br />{' '}<span className="luminous-text">illuminated.</span></h1>
           <p className="tagline">Understand the question. Find the answer. Learn why.</p>
         </div>
         <div className="intro-action">
@@ -74,6 +74,12 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
       </section>
 
       <CaptureDialog state={capture} controller={controller} />
+      <ol className="workflow-steps" aria-label="Learning workflow">
+        <li aria-current={!capture.result ? 'step' : undefined}><span>01</span>Select Source &amp; Capture</li>
+        <li aria-current={capture.result && observation.phase !== 'ready' ? 'step' : undefined}><span>02</span>Read Question</li>
+        <li aria-current={observation.phase === 'ready' && !answer.result ? 'step' : undefined}><span>03</span>Get Suggested Answer</li>
+        <li aria-current={answer.result ? 'step' : undefined}><span>04</span>Review explanation</li>
+      </ol>
       <ReasoningControls state={reasoningState} controller={reasoning} />
 
       <div className="workbench reveal" data-spotlight>

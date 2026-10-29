@@ -16,7 +16,7 @@ function applyTheme(theme: Theme) {
     ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
     : theme
   document.documentElement.dataset.theme = resolved
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#090909' : '#f7f7f5')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#0B0E0D' : '#F6F9F7')
 }
 
 // Resolve the existing preference before React renders to avoid a light/dark flash.

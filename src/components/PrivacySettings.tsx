@@ -6,7 +6,7 @@ export function PrivacyContent({ state, onSet, onRetry }: { state: PrivacyViewSt
   const status = state.status
   const busy = state.phase === 'checking' || state.phase === 'updating'
   const labels = { enabled: 'Enabled · Windows affinity verified', disabled: 'Off · normal capture behavior', unsupported: 'Unavailable on this platform or Windows version', failed: 'Could not verify the requested protection state' }
-  return <section className="privacy-settings" aria-labelledby="privacy-title">
+  return <section className="privacy-settings" data-state={status?.effectiveState ?? state.phase} aria-labelledby="privacy-title">
     <h3 id="privacy-title" className="eyebrow">PRIVACY</h3>
     <div className="preference-row privacy-row">
       <div><label htmlFor="screen-share-privacy">Screen-share privacy</label><p id="screen-share-description">Keep SolveGuide out of supported screen captures and screen shares.</p></div>
