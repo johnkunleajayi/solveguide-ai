@@ -23,6 +23,9 @@ from app.context_library.service import ContextService
 from app.context_library.storage import LocalDocumentStorage
 from app.database import Database, PlatformError
 from app.errors import VisionError
+from app.learning.api import router as learning_router
+from app.learning.repository import SessionRepository
+from app.learning.service import SessionService
 from app.middleware import VisionRequestBoundary, error_response
 from app.providers.base import VisionProvider
 from app.providers.openai import OpenAIVisionProvider
@@ -58,6 +61,7 @@ def create_app(
         title="SolveGuide AI", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
     )
     app.state.database = database
+    app.state.learning_service = SessionService(SessionRepository(database))
     app.state.google_provider = OpenIDGoogleProvider(settings)
     app.state.settings = settings
     app.state.context_service = ContextService(
@@ -100,6 +104,7 @@ def create_app(
         return error_response("invalid_request", "The request is incomplete or invalid.", 422)
 
     app.include_router(router)
+    app.include_router(learning_router)
     app.include_router(answer_router)
     app.include_router(auth_router)
     app.include_router(rag_router)  # /indexes must precede the UUID detail route.

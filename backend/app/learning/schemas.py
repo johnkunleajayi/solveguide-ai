@@ -1,0 +1,93 @@
+from datetime import datetime
+from typing import Annotated, Literal
+from uuid import UUID
+
+from pydantic import Field, field_validator, model_validator
+
+from app.rag.schemas import DocumentId, Mode
+from app.schemas import QuestionObservation, StrictModel
+
+Purpose = Literal[
+    "general_learning",
+    "certification_practice",
+    "interview_preparation",
+    "technical_assessment_practice",
+    "research_study",
+    "custom",
+]
+
+
+class DraftInput(StrictModel):
+    revision: Annotated[int, Field(ge=1, le=2147483646)] | None = None
+    purpose: Purpose
+    custom_purpose: Annotated[str, Field(max_length=100)] | None = None
+    objective: Annotated[str, Field(min_length=1, max_length=2000)]
+    document_ids: Annotated[list[DocumentId], Field(max_length=5)] = []
+    mode: Mode = "general"
+    allow_context_transmission: bool = False
+
+    @field_validator("objective", "custom_purpose")
+    @classmethod
+    def clean_text(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if not value or any(ord(c) < 32 and c not in "\n\t" for c in value):
+            raise ValueError("Enter readable text")
+        return value
+
+    @model_validator(mode="after")
+    def selection(self):
+        self.document_ids = [str(UUID(v)) for v in self.document_ids]
+        if len(set(self.document_ids)) != len(self.document_ids):
+            raise ValueError("Duplicate selection")
+        if (self.purpose == "custom") != (self.custom_purpose is not None):
+            raise ValueError("Custom purpose required only for custom")
+        return self
+
+
+class Revision(StrictModel):
+    revision: Annotated[int, Field(ge=1, le=2147483646)]
+
+
+class StartInput(Revision):
+    preparation_id: DocumentId
+    replace_active_id: DocumentId | None = None
+
+
+class SessionAnswerRequest(StrictModel):
+    observation: QuestionObservation
+    session_id: DocumentId
+    session_revision: Annotated[int, Field(ge=1, le=2147483646)]
+
+
+class DocumentReference(StrictModel):
+    id: DocumentId
+    title: str
+    extraction_status: Literal["ready", "insufficient", "failed", "deleting"]
+    index_status: Literal["ready", "failed", "indexing", "not_indexed"]
+
+
+class SessionView(StrictModel):
+    id: DocumentId
+    revision: int
+    purpose: Purpose
+    custom_purpose: str | None
+    objective: str
+    mode: Mode
+    document_ids: list[DocumentId]
+    documents: list[DocumentReference]
+    allow_context_transmission: bool
+    status: Literal["draft", "ready", "active", "ended"]
+    ready: bool
+    issues: list[str]
+    missing_document_count: int
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None
+    ended_at: datetime | None
+
+
+class PreparationState(StrictModel):
+    draft: SessionView | None
+    active: SessionView | None

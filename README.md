@@ -1145,3 +1145,21 @@ $env:RUN_POSTGRES_ROLLBACK_TESTS = '1'
 & .tools/python/Scripts/python.exe -m pytest backend/tests/test_rag_postgres.py --basetemp D:\solveguide-ai\.cache\pytest-rag-postgres
 Remove-Item Env:RUN_POSTGRES_ROLLBACK_TESTS
 ```
+
+
+## Milestone 12 — Session Preparation
+
+The authenticated desktop now prepares Purpose → Objective → Reference Materials →
+Reasoning Mode → Review → Start Session, then opens the existing manual capture/answer
+workspace. Draft and active configuration recover from the backend; one active session
+per account is enforced by serialized transactions and a PostgreSQL partial unique
+index. End and replace are explicit, revision-checked actions.
+
+See [Session Preparation architecture and manual testing](docs/SESSION_PREPARATION.md)
+for schemas, endpoints, migration commands, security, RAG integration and acceptance steps.
+Additive `0004_session_preparation` is **not applied to live Neon without approval**.
+Only purpose/objective/selection/mode/consent/lifecycle metadata persists. Screenshots,
+questions, answers and provider payloads remain ephemeral. Explicit recommendations
+send learning intent to the provider; grounded requests preserve separate passage
+consent and selected-document ownership. There is no automatic capture or Live Monitor.
+No new environment variables or dependencies are needed.

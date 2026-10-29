@@ -33,10 +33,10 @@ def config(output=None):
 
 def test_alembic_offline_upgrade_downgrade_upgrade_and_schema_consistency():
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["0003_context_rag"]
+    assert script.get_heads() == ["0004_session_preparation"]
     up, down, again = io.StringIO(), io.StringIO(), io.StringIO()
     command.upgrade(config(up), "head", sql=True)
-    command.downgrade(config(down), "0003_context_rag:base", sql=True)
+    command.downgrade(config(down), "0004_session_preparation:base", sql=True)
     command.upgrade(config(again), "head", sql=True)
     assert up.getvalue() == again.getvalue()
     for name in Base.metadata.tables:
@@ -162,3 +162,25 @@ def test_rag_migration_roundtrip_preserves_documents_and_auth():
         assert f"DROP TABLE {name}" not in down.getvalue()
     assert "DELETE FROM context_documents" not in up.getvalue()
     assert "DROP EXTENSION" not in down.getvalue()
+
+
+def test_preparation_migration_is_additive_and_roundtrips_offline():
+    up, down, again = io.StringIO(), io.StringIO(), io.StringIO()
+    command.upgrade(config(up), "0003_context_rag:0004_session_preparation", sql=True)
+    command.downgrade(config(down), "0004_session_preparation:0003_context_rag", sql=True)
+    command.upgrade(config(again), "0003_context_rag:0004_session_preparation", sql=True)
+    assert up.getvalue() == again.getvalue()
+    for name in ["learning_sessions", "learning_session_documents"]:
+        assert f"CREATE TABLE {name}" in up.getvalue()
+        assert f"DROP TABLE {name}" in down.getvalue()
+    assert "uq_learning_active_owner" in up.getvalue()
+    assert "ON DELETE CASCADE" in up.getvalue()
+    for name in [
+        "users",
+        "auth_sessions",
+        "context_documents",
+        "context_indexes",
+        "context_chunks",
+    ]:
+        assert f"DROP TABLE {name}" not in down.getvalue()
+        assert f"ALTER TABLE {name}" not in up.getvalue()

@@ -560,6 +560,7 @@ def test_grounded_api_returns_typed_sources_after_auth(setup_rag):
     s.provider.recommend_grounded.return_value = draft(s)
     app = create_app(Settings(_env_file=None))
     app.state.rag_service = s.service
+    app.state.learning_service.guard_legacy = AsyncMock()
     app.dependency_overrides[required_current_user] = lambda: NS(id=s.repo.owner)
     with TestClient(app, base_url="http://127.0.0.1") as client:
         response = client.post(
@@ -576,6 +577,7 @@ def test_index_api_rejects_consent_coercion_and_wrong_origin(setup_rag):
     s = setup_rag
     app = create_app(Settings(_env_file=None))
     app.state.rag_service = s.service
+    app.state.learning_service.guard_legacy = AsyncMock()
     app.dependency_overrides[required_current_user] = lambda: NS(id=s.repo.owner)
     with TestClient(app, base_url="http://127.0.0.1") as client:
         url = f"/api/v1/context/documents/{s.repo.identifier}/index"

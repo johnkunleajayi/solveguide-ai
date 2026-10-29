@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Settings2 } from 'lucide-react'
-import { AnswerWorkspace } from './components/AnswerWorkspace'
+import { LearningWorkspace } from './components/LearningWorkspace'
 import { PointerLight } from './components/PointerLight'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
@@ -40,7 +40,7 @@ function Application() {
         </header>
         <main id="main" tabIndex={-1}>
           <AuthGate state={state}>
-            <div hidden={libraryOpen}><AnswerWorkspace key={state.user?.id} active={!libraryOpen} onOpenDocument={id => { setSourceDocument({ owner: state.user?.id ?? '', id }); setLibraryOpen(true) }} onCaptureModalChange={setCaptureOpen} /></div>
+            <div hidden={libraryOpen}><LearningWorkspace key={state.user?.id} active={!libraryOpen} onOpenDocument={id => { setSourceDocument({ owner: state.user?.id ?? '', id }); setLibraryOpen(true) }} onCaptureModalChange={setCaptureOpen} /></div>
             {libraryOpen && <ContextLibrary key={state.user?.id} initialDocumentId={sourceDocument?.owner === state.user?.id ? sourceDocument?.id : null} onModalChange={setLibraryModal} />}
             <footer className="workspace-footer reveal"><span><span className="signal-dot" aria-hidden="true" />Capture · Understand · Recommend · Explain</span><span>A little clarity changes everything.</span></footer>
           </AuthGate>

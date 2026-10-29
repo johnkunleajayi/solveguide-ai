@@ -12,6 +12,7 @@ from openai import (
 )
 from pydantic import ValidationError
 
+from app.answer.context import LearningContext
 from app.answer.errors import AnswerError
 from app.answer.prompt import ANSWER_INSTRUCTIONS, answer_input
 from app.answer.schemas import AnswerRecommendation
@@ -25,17 +26,23 @@ class OpenAIAnswerProvider:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def recommend(self, observation: QuestionObservation) -> AnswerRecommendation:
+    async def recommend(
+        self, observation: QuestionObservation, context: LearningContext | None = None
+    ) -> AnswerRecommendation:
         return await self._parse(
-            ANSWER_INSTRUCTIONS, answer_input(observation), AnswerRecommendation
+            ANSWER_INSTRUCTIONS, answer_input(observation, context), AnswerRecommendation
         )
 
-    async def recommend_grounded(self, observation, mode, evidence):
+    async def recommend_grounded(
+        self, observation, mode, evidence, context: LearningContext | None = None
+    ):
         payload = dict(
             reasoning_mode=mode,
             observation=observation.model_dump(),
             retrieved_evidence=[e.model_dump() for e in evidence],
         )
+        if context is not None:
+            payload["learning_context"] = context.model_dump()
         try:
             async with asyncio.timeout(self.settings.answer_timeout_seconds):
                 draft = await self._parse(

@@ -1,6 +1,7 @@
 mod auth;
 mod capture;
 mod context_library;
+mod learning;
 mod privacy;
 use tauri::Manager;
 pub fn run() {
@@ -18,6 +19,7 @@ pub fn run() {
             auth::ai_request,
             auth::ai_cancel,
             context_library::library_request,
+            learning::session_request,
             privacy::privacy_get_state,
             privacy::privacy_set_enabled
         ])

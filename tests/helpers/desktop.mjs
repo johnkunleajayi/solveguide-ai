@@ -53,7 +53,7 @@ export function desktopFixture(kind = 'workspace') {
   })
   const App = compile('App.tsx', {
     './auth/context': authContext, './auth/controller': authLogic, './components/AuthGate': gate,
-    './components/AnswerWorkspace': workspace, './components/Sidebar': compile('components/Sidebar.tsx', { './Brand': Brand }),
+    './components/LearningWorkspace': { LearningWorkspace: workspace.AnswerWorkspace }, './components/Sidebar': compile('components/Sidebar.tsx', { './Brand': Brand }),
     './components/ContextLibrary': {}, './components/SettingsDialog': { SettingsDialog: () => null }, './components/PointerLight': { PointerLight: () => null },
     './hooks/useTheme': { useTheme: () => ({ theme: 'dark', setTheme: noop }) }, './hooks/usePointerPreference': { usePointerPreference: () => ({ pointerLight: false, setPointerLight: noop }) },
   }).default

@@ -31,6 +31,8 @@ def access(observation_data, answer_data):
     app = create_app(Settings(_env_file=None), vision, answer)
     database = MemoryDatabase()
     app.state.database = database
+    # This fixture isolates authentication/provider access with no active learning session.
+    app.state.learning_service.guard_legacy = AsyncMock()
     token = secret()
     from uuid import uuid4
 

@@ -1,3 +1,4 @@
+from app.answer.context import LearningContext
 from app.answer.errors import AnswerError
 from app.answer.provider import AnswerProvider
 from app.answer.schemas import AnswerRecommendation
@@ -84,7 +85,9 @@ class AnswerService:
     def __init__(self, provider: AnswerProvider):
         self.provider = provider
 
-    async def recommend(self, observation: QuestionObservation) -> AnswerRecommendation:
+    async def recommend(
+        self, observation: QuestionObservation, context: LearningContext | None = None
+    ) -> AnswerRecommendation:
         if (
             observation.status != "detected"
             or not observation.question_text
@@ -123,7 +126,11 @@ class AnswerService:
                 "There are not enough visible options to recommend an answer.",
             )
         try:
-            result = await self.provider.recommend(observation)
+            result = (
+                await self.provider.recommend(observation, context=context)
+                if context is not None
+                else await self.provider.recommend(observation)
+            )
             result = AnswerRecommendation.model_validate(result.model_dump())
             return validate_recommendation(observation, result)
         except AnswerError:

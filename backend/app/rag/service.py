@@ -158,9 +158,13 @@ class RagService:
             ) from None
         return {"status": "ready", "unchanged": False}
 
-    async def recommend(self, owner, request):
+    async def recommend(self, owner, request, context=None):
         if request.mode == "general":
-            return await self.answer_service.recommend(request.observation)
+            return (
+                await self.answer_service.recommend(request.observation, context=context)
+                if context is not None
+                else await self.answer_service.recommend(request.observation)
+            )
         ids = [UUID(value) for value in request.document_ids]
         # Ownership before consent/provider execution; never broaden selection on failure.
         await self.repository.selection(owner, ids)
@@ -211,7 +215,10 @@ class RagService:
             draft = GroundedDraft.model_validate(
                 (
                     await provider.recommend_grounded(
-                        request.observation, request.mode, retrieved.evidence
+                        request.observation,
+                        request.mode,
+                        retrieved.evidence,
+                        **({"context": context} if context is not None else {}),
                     )
                 ).model_dump()
             )

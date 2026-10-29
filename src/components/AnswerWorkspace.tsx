@@ -17,8 +17,9 @@ import { ReasoningControls } from './ReasoningControls'
 import { createReasoningController } from '../rag/controller'
 import { ragApi } from '../rag/client'
 import { subscribeLibraryChanges } from '../library/changes'
+import type { LearningSession } from '../learning/types'
 
-export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDocument }: { onCaptureModalChange: (open: boolean) => void; active?: boolean; onOpenDocument?: (id: string) => void }) {
+export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDocument, preparation }: { onCaptureModalChange: (open: boolean) => void; active?: boolean; preparation?: LearningSession; onOpenDocument?: (id: string) => void }) {
   const { controller: auth } = useAuth()
   const [protectedCapture] = useState(() => authenticatedCapture(nativeCapture, authApi, auth.invalidate))
   const [controller] = useState(() => createCaptureController(protectedCapture))
@@ -27,12 +28,23 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
   const observation = useSyncExternalStore(observationController.subscribe, observationController.getSnapshot)
   const [answerController] = useState(() => createAnswerController(getSuggestedAnswer))
   const answer = useSyncExternalStore(answerController.subscribe, answerController.getSnapshot)
-  const [reasoning] = useState(() => createReasoningController(ragApi, answerController.reset, auth.invalidate))
+  const [reasoning] = useState(() => {
+    const context = createReasoningController(ragApi, answerController.reset, auth.invalidate)
+    if (preparation) { preparation.document_ids.forEach(id => context.select(id)); context.setMode(preparation.mode); context.consent(preparation.allow_context_transmission) }
+    return context
+  })
   const reasoningState = useSyncExternalStore(reasoning.subscribe, reasoning.getSnapshot)
   useEffect(() => subscribeLibraryChanges(id => {
-    if (reasoning.getSnapshot().selected.includes(id)) { answerController.reset(); void reasoning.refresh() }
-  }), [reasoning, answerController])
-  useEffect(() => { if (active) void reasoning.refresh() }, [active, reasoning])
+    if ((preparation?.document_ids ?? reasoning.getSnapshot().selected).includes(id)) { answerController.reset(); void reasoning.refresh() }
+  }), [reasoning, answerController, preparation])
+  useEffect(() => {
+    if (preparation) {
+      preparation.document_ids.forEach(id => { if (!reasoning.getSnapshot().selected.includes(id)) reasoning.select(id) })
+      reasoning.setMode(preparation.mode)
+      if (reasoning.getSnapshot().consent !== preparation.allow_context_transmission) reasoning.consent(preparation.allow_context_transmission)
+    }
+    if (active) void reasoning.refresh()
+  }, [active, reasoning, preparation])
   useEffect(() => {
     const refresh = () => { if (active) void reasoning.refresh() }
     window.addEventListener('focus', refresh)
@@ -46,7 +58,7 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
     const disconnect = connectWorkspaceAccess(controller, observationController, answerController, auth.invalidate)
     return () => { protectedCapture.close(); disconnect() }
   }, [controller, observationController, answerController, auth, protectedCapture])
-  const requestAnswer = () => { if (observation.observation && reasoning.ready()) void answerController.request(observation.observation, reasoning.options()) }
+  const requestAnswer = () => { if (observation.observation && (preparation ? preparation.ready : reasoning.ready())) void answerController.request(observation.observation, preparation ? {mode:preparation.mode,document_ids:preparation.document_ids,allow_context_transmission:preparation.allow_context_transmission,session:{id:preparation.id,revision:preparation.revision}} : reasoning.options()) }
   useEffect(() => {
     observationController.reset()
     return () => observationController.reset()
@@ -80,7 +92,7 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
         <li aria-current={observation.phase === 'ready' && !answer.result ? 'step' : undefined}><span>03</span>Get Suggested Answer</li>
         <li aria-current={answer.result ? 'step' : undefined}><span>04</span>Review explanation</li>
       </ol>
-      <ReasoningControls state={reasoningState} controller={reasoning} />
+      {!preparation && <ReasoningControls state={reasoningState} controller={reasoning} />}
 
       <div className="workbench reveal" data-spotlight>
         <section className="question-panel" aria-labelledby="question-title">
@@ -102,12 +114,12 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
             <span className="state-label">{observation.phase === 'ready' ? 'Read' : observation.phase === 'reading' ? 'Reading' : 'Not read'}</span>
           </header>
           <QuestionObservationView state={observation} onRetry={readCapture} onCancel={() => observationController.reset()} />
-          <AnswerRecommendationView state={answer} observation={observation.observation} onRequest={requestAnswer} onCancel={() => answerController.reset()} onOpenDocument={onOpenDocument} enabled={observation.phase === 'ready' && capture.phase === 'preview' && reasoning.ready()} />
+          <AnswerRecommendationView state={answer} observation={observation.observation} onRequest={requestAnswer} onCancel={() => answerController.reset()} onOpenDocument={onOpenDocument} enabled={observation.phase === 'ready' && capture.phase === 'preview' && (preparation ? preparation.ready : reasoning.ready())} />
         </section>
 
         <aside className="context-strip" aria-label="Context status">
           <span className="context-title"><span className="section-index" aria-hidden="true">04</span>Context</span>
-          <span className="context-description">{reasoningState.mode.replace('_', ' ')} · {reasoningState.selected.length} selected</span>
+          <span className="context-description">{(preparation?.mode ?? reasoningState.mode).replace('_', ' ')} · {(preparation?.document_ids ?? reasoningState.selected).length} selected</span>
           <span className="planned-label">Explicit selection · Ephemeral answers</span>
         </aside>
       </div>

@@ -6,7 +6,23 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 11C public website
+## Current scope: Milestone 12 Session Preparation
+
+Follow `docs/SESSION_PREPARATION.md`. `app/learning` owns preparation metadata and
+lifecycle; `src/learning` / LearningWorkspace own typed desktop recovery and steps.
+Account row locks plus partial unique indexes enforce one active and one draft/ready
+per owner. Composite owner FKs scope document references; deletion cascades links.
+Preserve revision/confirmation checks, readiness/consent validation and late-result
+rejection. Active answer requests contain observation plus session ID/revision only;
+backend configuration is authoritative. Legacy envelopes cannot bypass an active
+session. General never retrieves documents. Purpose/objective are untrusted learning
+intent. Never persist captures/questions/answers/provider payloads. No Live Monitor,
+automatic capture/provider calls or history. Do not apply `0004_session_preparation`
+to live Neon without explicit approval; offline DDL and isolated tests only by default.
+Existing privacy, native credentials, cancellation, RAG, brand and website boundaries
+remain mandatory. No commit/push/deploy.
+
+## Completed brand and website foundation
 
 Stage 11A adds shared brand tokens and an isolated development showcase only.
 Follow `brand/README.md` and `brand/tokens.css`: exact charcoal `#0B0E0D`, white
@@ -39,7 +55,7 @@ SolveGuide is desktop-only; Google authentication is mandatory for all core lear
 actions. Local privacy/appearance Settings remain available without authentication.
 Region remains unavailable. Milestone 9 adds only authenticated PDF/DOCX/TXT and
 pasted-text Context Library management. Do not add learning history,
-Session Preparation, payments,
+payments,
 analytics or automatic/continuous capture. Milestone 7 adds only supported native
 capture protection for SolveGuide's own main window.
 
@@ -140,8 +156,7 @@ Milestone 9 implements reusable PDF/DOCX/TXT/notes library management, separate 
 Session Preparation (work description, material selection/review, reasoning mode,
 begin), GENERAL / CONTEXT GUIDED / MATERIALS ONLY modes. Context Guided should be
 the default with selected materials while broader knowledge remains available;
-Materials Only must communicate insufficient support. Reasoning modes and Session
-Preparation remains documentation-only. Milestone 10 implements explicit selected-document
+Materials Only must communicate insufficient support. Reasoning modes and preparation are implemented in Milestones 10 and 12. Milestone 10 implements explicit selected-document
 reasoning modes and retrieval after consent; never use materials in General mode.
 Future region capture stays native. Screen-share privacy now lives behind the
 Tauri/Rust boundary, not CSS. No anti-proctoring, monitoring/detection evasion or
@@ -201,8 +216,7 @@ answer quality. If a browser URL cannot be verified by Computer Use, stop browse
 control and hand off exact native/live steps; never bypass the limitation.
 
 README contains the contract, supported types, privacy, cost controls and future
-selected-context boundary. Context Library management is now implemented separately; implement RAG/materials modes only within Milestone 10; keep session preparation
-documented only. Do not add functional milestones during Stage 11A/11B or commit/push.
+selected-context boundary. Context Library management is now implemented separately; implement RAG/materials modes only within Milestone 10; follow the Milestone 12 preparation contract. Do not add functional milestones during Stage 11A/11B or commit/push.
 
 ## Milestone 6 platform invariants
 
@@ -407,6 +421,6 @@ content, vectors, provider payloads or credentials. Keep native credentials in R
 on changes/logout/expiry. Keep late index/answer/catalog results from restoring stale
 state. Selected documents beyond the first page must remain correctly represented.
 Keep library source links, themes, keyboard/focus, compact layout, Pointer Light and
-screen-share privacy. All live learning content stays ephemeral; no session/history,
+screen-share privacy. All live learning content stays ephemeral; no question/answer history,
 telemetry, monetization, OCR or account-wide auto-retrieval. Preserve these RAG
 boundaries during Stage 11A/11B; do not introduce a new functional milestone.

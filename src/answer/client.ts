@@ -4,6 +4,10 @@ import { requestCore } from '../api/core'
 import { parseGroundedAnswer } from '../rag/client'
 import type { ReasoningOptions } from '../rag/types'
 const messages: Record<string, string> = {
+  session_changed: 'The session changed or ended. Refresh your active session.',
+  session_required: 'Recover the active session before requesting an answer.',
+  preparation_changed: 'The session revision changed. Refresh the workspace.',
+  session_materials_changed: 'Session materials changed or are not ready. End this session and prepare again.',
   context_changed: 'Selected materials changed. Refresh readiness and request a new answer.',
   context_consent_required: 'Allow selected passage transmission before a grounded answer.',
   document_not_found: 'A selected document is no longer available. Refresh and review the selection.',
@@ -27,7 +31,7 @@ export async function getSuggestedAnswer(observation: QuestionObservation, signa
   const timeout = AbortSignal.timeout(110_000)
   try {
     const grounded = options && options.mode !== 'general'
-    const response = await requestCore('answer', grounded ? { observation, ...options } : observation, AbortSignal.any([signal, timeout]))
+    const response = await requestCore('answer', options?.session ? {observation,session_id:options.session.id,session_revision:options.session.revision} : grounded ? { observation, ...options } : observation, AbortSignal.any([signal, timeout]))
     const raw: unknown = response.data
     if (!response.ok) {
       const code = response.status === 401 ? (response.error?.code ?? 'sign_in_required') : response.error?.code ?? 'answer_provider_error'

@@ -78,6 +78,23 @@ impl AuthState {
         epoch: u64,
         request: crate::context_library::Request,
     ) -> Result<serde_json::Value> {
+        self.owned_request(epoch, "context/documents", request)
+            .await
+    }
+    pub(crate) async fn learning_request(
+        &self,
+        epoch: u64,
+        request: crate::context_library::Request,
+    ) -> Result<serde_json::Value> {
+        self.owned_request(epoch, "learning", request).await
+    }
+    // Trusted native adapters choose one of two fixed API areas. No frontend URL.
+    async fn owned_request(
+        &self,
+        epoch: u64,
+        area: &str,
+        request: crate::context_library::Request,
+    ) -> Result<serde_json::Value> {
         self.library_credential_present(epoch).await?;
         let token = self
             .credentials
@@ -90,10 +107,7 @@ impl AuthState {
             .client
             .request(
                 request.method,
-                format!(
-                    "http://127.0.0.1:8000/api/v1/context/documents{}",
-                    request.suffix
-                ),
+                format!("http://127.0.0.1:8000/api/v1/{area}{}", request.suffix),
             )
             .header("Origin", ORIGIN)
             .bearer_auth(&token)

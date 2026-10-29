@@ -26,6 +26,9 @@ def authorized_test_app(app):
             avatar_url=None,
         )
 
+    from unittest.mock import AsyncMock
+
+    app.state.learning_service.guard_legacy = AsyncMock()
     app.dependency_overrides[required_current_user] = user
     return app
 

@@ -63,7 +63,7 @@ fn encode(value: &str) -> String {
         })
         .collect()
 }
-fn identifier(value: &str) -> Result<(), AuthError> {
+pub(crate) fn identifier(value: &str) -> Result<(), AuthError> {
     if value.len() != 36
         || !value.bytes().enumerate().all(|(i, c)| {
             if [8, 13, 18, 23].contains(&i) {
