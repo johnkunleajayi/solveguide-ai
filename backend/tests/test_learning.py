@@ -126,10 +126,10 @@ async def started(s, mode="general"):
 @pytest.mark.parametrize(
     "patch",
     [
-        dict(objective="   "),
+        dict(purpose="interview_preparation", objective="   "),
         dict(objective="x" * 2001),
         dict(purpose="unknown"),
-        dict(purpose="custom"),
+        dict(purpose="custom", custom_purpose=" "),
         dict(custom_purpose="unexpected"),
         dict(document_ids=["invalid"]),
         dict(allow_context_transmission="yes"),
@@ -605,3 +605,114 @@ def test_liveness_success_is_compact_and_correlated():
         "documents",
         "document_ids",
     }
+
+
+@pytest.mark.parametrize(
+    "legacy,canonical",
+    [
+        ("general_learning", "custom"),
+        ("certification_practice", "research_study"),
+        ("technical_assessment_practice", "interview_preparation"),
+        ("interview_preparation", "interview_preparation"),
+        ("research_study", "research_study"),
+        ("custom", "custom"),
+    ],
+)
+def test_legacy_purpose_is_read_without_mutation_and_normalized_only_on_edit(
+    setup_learning, legacy, canonical
+):
+    s = setup_learning
+
+    async def run():
+        active = await started(s)
+        row = next(r for r in s.repo.rows.values() if str(r.id) == active["id"])
+        row.purpose = legacy
+        row.custom_purpose = "My original purpose" if legacy == "custom" else None
+        before = deepcopy((row.purpose, row.custom_purpose, row.revision, row.objective))
+        result = await s.service.active(s.owner)
+        assert result["purpose"] == legacy and result["revision"] == before[2]
+        config = await s.service.configuration(s.owner, row.id, row.revision)
+        assert config["objective"] == before[3]
+        assert (row.purpose, row.custom_purpose, row.revision, row.objective) == before
+        edited = DraftInput(
+            purpose=legacy, custom_purpose=row.custom_purpose, objective=row.objective
+        )
+        assert edited.purpose == canonical
+        if canonical == "custom":
+            assert edited.custom_purpose
+        # A stale edit is still rejected; normalization does not bypass revision checks.
+        with pytest.raises(PlatformError):
+            await s.service.save(s.owner, edited.model_copy(update={"revision": 999}))
+
+    asyncio.run(run())
+
+
+def test_general_custom_defaults_and_explicit_objective_validation():
+    from typing import get_args
+
+    from app.learning.schemas import DEFAULT_OBJECTIVE, NewPurpose
+
+    assert set(get_args(NewPurpose)) == {"interview_preparation", "research_study", "custom"}
+    for fields in [{}, {"objective": ""}, {"objective": "   "}]:
+        value = DraftInput(purpose="custom", **fields)
+        assert value.objective == DEFAULT_OBJECTIVE and value.custom_purpose == "General / Custom"
+    assert DraftInput(purpose="custom", objective="  Learn coding  ").objective == "Learn coding"
+    for objective in ["x" * 2001, "\x00", "text\x01"]:
+        with pytest.raises(ValidationError):
+            DraftInput(purpose="custom", objective=objective)
+    for purpose in ["interview_preparation", "research_study"]:
+        with pytest.raises(ValidationError):
+            DraftInput(purpose=purpose, objective=" ")
+
+
+@pytest.mark.parametrize("purpose", ["interview_preparation", "research_study", "custom"])
+@pytest.mark.parametrize(
+    "question_type",
+    [
+        "multiple_choice",
+        "multiple_select",
+        "true_false",
+        "short_answer",
+        "essay",
+        "mathematics",
+        "code",
+        "mixed",
+    ],
+)
+def test_all_purposes_forward_every_question_format_unchanged(
+    setup_learning, observation_data, purpose, question_type
+):
+    s = setup_learning
+
+    async def run():
+        row = await s.service.save(s.owner, payload(s, purpose=purpose))
+        row = await s.service.ready(s.owner, row["id"], row["revision"])
+        row = await s.service.start(
+            s.owner, StartInput(preparation_id=row["id"], revision=row["revision"])
+        )
+        data = {
+            **observation_data,
+            "question_type": question_type,
+            "instructions": ["Preserve these question-specific requirements."],
+        }
+        if question_type == "multiple_select":
+            data["required_selection_count"] = 2
+        elif question_type not in ("multiple_choice", "true_false"):
+            data.update(options=[], required_selection_count=None)
+        observation = QuestionObservation.model_validate(data)
+        answer = NS(recommend=AsyncMock(return_value="validated answer"))
+        rag = NS(recommend=AsyncMock(side_effect=AssertionError("General must not retrieve")))
+        result = await s.service.recommend(
+            s.owner,
+            SessionAnswerRequest(
+                observation=observation, session_id=row["id"], session_revision=row["revision"]
+            ),
+            answer,
+            rag,
+        )
+        assert result == "validated answer"
+        assert answer.recommend.await_args.args == (observation,)
+        assert answer.recommend.await_args.kwargs["context"].objective == row["objective"]
+        rag.recommend.assert_not_awaited()
+
+    asyncio.run(run())

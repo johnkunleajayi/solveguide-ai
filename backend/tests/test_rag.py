@@ -695,3 +695,197 @@ def test_retrieval_query_includes_observed_code_and_context_without_storing_it(s
         assert all("SELECT COUNT(*)" not in part.content for part in s.repo.parts)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("case", ["empty", "unsupported", "no_citations", "contradictory"])
+def test_context_guided_supplements_missing_document_support_without_fabricated_sources(
+    setup_rag, case
+):
+    s = setup_rag
+
+    async def run():
+        await indexed(s)
+        if case == "empty":
+            s.repo.parts = []
+        else:
+            s.provider.recommend_grounded.return_value = draft(
+                s,
+                sufficient_evidence=case != "unsupported",
+                support=[] if case == "no_citations" else draft(s).support,
+                contradictory_evidence=case == "contradictory",
+            )
+        before = s.observation.model_dump()
+        result = await s.service.recommend(s.repo.owner, request(s, "context_guided"))
+        assert result.status == "answered" and result.selected_options == ["A"]
+        assert (
+            result.grounding_status == "general_reasoning"
+            and result.reasoning_mode == "context_guided"
+        )
+        assert not result.citations and result.general_reasoning
+        assert "not selected-document evidence" in result.general_reasoning[0]
+        assert result.explanation == s.answer_data["explanation"]
+        s.provider.recommend.assert_awaited_once_with(s.observation)
+        assert s.observation.model_dump() == before
+        if case == "empty":
+            s.provider.recommend_grounded.assert_not_awaited()
+        else:
+            s.provider.recommend_grounded.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_context_guided_provider_inability_still_abstains_without_retries(setup_rag):
+    s = setup_rag
+
+    async def run():
+        await indexed(s)
+        s.repo.parts = []
+        s.provider.recommend.return_value = AnswerRecommendation.model_validate(
+            {
+                **s.answer_data,
+                "status": "insufficient_information",
+                "selected_options": [],
+                "answer_text": None,
+                "code_answer": None,
+                "true_false_answer": None,
+                "key_points": [],
+                "confidence": 0,
+                "warnings": ["Question cannot be answered reliably."],
+            }
+        )
+        result = await s.service.recommend(s.repo.owner, request(s, "context_guided"))
+        assert result.status == "insufficient_information" and not result.citations
+        s.provider.recommend.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_context_guided_relevant_support_does_not_call_general_provider(setup_rag):
+    s = setup_rag
+
+    async def run():
+        await indexed(s)
+        s.provider.recommend_grounded.return_value = draft(s)
+        result = await s.service.recommend(s.repo.owner, request(s, "context_guided"))
+        assert result.citations and result.grounding_status in ("document_supported", "mixed")
+        assert result.citations[0].chunk_id == str(s.repo.parts[0].id)
+        s.provider.recommend.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+def test_guided_supplement_cannot_publish_deleted_or_reindexed_selection(setup_rag):
+    s = setup_rag
+
+    async def run():
+        await indexed(s)
+        s.repo.parts = []
+
+        async def change(observation):
+            s.repo.changed = True
+            return AnswerRecommendation.model_validate(s.answer_data)
+
+        s.provider.recommend.side_effect = change
+        with pytest.raises(PlatformError):
+            await s.service.recommend(s.repo.owner, request(s, "context_guided"))
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("kind", ["multiple_select", "code"])
+def test_guided_general_preserves_selection_and_code_requirements(setup_rag, kind):
+    s = setup_rag
+
+    async def run():
+        await indexed(s)
+        s.repo.parts = []
+        data = s.observation.model_dump()
+        data["question_type"] = kind
+        proposal = {**s.answer_data, "question_type": kind}
+        if kind == "multiple_select":
+            data["required_selection_count"] = 2
+            proposal["selected_options"] = ["A", "B"]
+        else:
+            data.update(
+                options=[],
+                required_selection_count=None,
+                instructions=["Use Python; preserve the input signature."],
+                visual_elements=[
+                    dict(
+                        kind="code",
+                        description="Function stub",
+                        text="def solve(items):\n    pass",
+                        language="python",
+                    )
+                ],
+            )
+            proposal.update(
+                selected_options=[],
+                answer_text=None,
+                code_answer=dict(
+                    language="python", code="def solve(items):\n    return len(items)"
+                ),
+            )
+        s.observation = QuestionObservation.model_validate(data)
+        s.provider.recommend.return_value = AnswerRecommendation.model_validate(proposal)
+        result = await s.service.recommend(s.repo.owner, request(s, "context_guided"))
+        s.provider.recommend.assert_awaited_once_with(s.observation)
+        assert result.grounding_status == "general_reasoning"
+        if kind == "multiple_select":
+            assert result.selected_options == ["A", "B"]
+        else:
+            assert result.code_answer.code == proposal["code_answer"]["code"]
+
+    asyncio.run(run())
+
+
+def test_guided_fabricated_citations_do_not_trigger_a_general_retry(setup_rag):
+    from app.answer.errors import AnswerError
+
+    s = setup_rag
+
+    async def run():
+        await indexed(s)
+        proposal = draft(s)
+        proposal.support[0].chunk_ids = [str(uuid4())]
+        s.provider.recommend_grounded.return_value = proposal
+        with pytest.raises(AnswerError, match="invalid_answer_response"):
+            await s.service.recommend(s.repo.owner, request(s, "context_guided"))
+        s.provider.recommend.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+def test_guided_general_supplement_is_bounded_by_the_existing_answer_deadline(setup_rag):
+    from app.answer.errors import AnswerError
+
+    s = setup_rag
+
+    async def run():
+        await indexed(s)
+        s.repo.parts = []
+        s.settings.answer_timeout_seconds = 1
+
+        async def slow(observation):
+            await asyncio.sleep(3)
+            return AnswerRecommendation.model_validate(s.answer_data)
+
+        s.provider.recommend.side_effect = slow
+        with pytest.raises(AnswerError, match="answer_timeout"):
+            await s.service.recommend(s.repo.owner, request(s, "context_guided"))
+        s.provider.recommend.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_materials_only_cannot_invoke_general_supplement_helper(setup_rag):
+    from app.rag.retrieval import Retrieved
+
+    s = setup_rag
+    with pytest.raises(PlatformError, match="invalid_reasoning_mode"):
+        asyncio.run(
+            s.service.general_fallback(
+                s.repo.owner, request(s), Retrieved([], "none", {}), None, "no_support"
+            )
+        )
+    s.provider.recommend.assert_not_awaited()

@@ -62,7 +62,8 @@ fn prepare(operation: Operation) -> Result<Request, AuthError> {
             ]
             .contains(&draft.purpose.as_str())
                 || !["general", "context_guided", "materials_only"].contains(&draft.mode.as_str())
-                || draft.objective.trim().is_empty()
+                || (draft.objective.trim().is_empty()
+                    && !["custom", "general_learning"].contains(&draft.purpose.as_str()))
                 || draft.objective.chars().count() > 2000
                 || draft
                     .custom_purpose
@@ -172,5 +173,23 @@ mod tests {
         .unwrap();
         assert_eq!(r.suffix, "/sessions/start");
         assert_eq!(r.method, Method::POST);
+    }
+    #[test]
+    fn purpose_compatibility_and_optional_general_objective_remain_bounded() {
+        for purpose in [
+            "custom",
+            "general_learning",
+            "interview_preparation",
+            "research_study",
+            "certification_practice",
+            "technical_assessment_practice",
+        ] {
+            let value = serde_json::json!({"kind":"save","draft":{"revision":null,"purpose":purpose,"custom_purpose":null,"objective":"","document_ids":[],"mode":"general","allow_context_transmission":false}});
+            let request = prepare(serde_json::from_value(value).unwrap());
+            assert_eq!(
+                request.is_ok(),
+                ["custom", "general_learning"].contains(&purpose)
+            );
+        }
     }
 }

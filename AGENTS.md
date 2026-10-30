@@ -6,7 +6,16 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 13 Live Question Monitor
+## Current scope: Milestone 14 purpose and reasoning correction
+
+Follow docs/MILESTONE_14.md. Offer exactly three purposes; retain all six legacy
+read values and map only display/explicit edits. No schema migration. Purpose must
+never filter question formats. Context Guided may supplement missing evidence through
+the existing AnswerService with explicit general-only attribution and no citations.
+Materials Only remains evidence-only; General still bypasses retrieval. Preserve
+revision/ownership/consent enforcement, monitor behavior and all privacy boundaries.
+
+## Preserved Milestone 13 Live Question Monitor
 
 Follow `docs/LIVE_MONITOR.md`. Native `monitor/` owns bounded sampling, local filtering,
 explicit lifecycle, run/generation cancellation and the owned answer panel. Monitoring
@@ -411,8 +420,9 @@ AnswerService/AnswerProvider path and zero document lookup/embedding behavior.
 Context Guided separates general supplements from document support; Materials Only
 requires sufficient selected evidence and per-answer/explanation/key-point support,
 plus the implemented independent structured verification call. Failed verification,
-contradictions, missing indexes or no relevant evidence abstain; never auto-fallback
-to General or broaden a document selection.
+contradictions, missing indexes or no relevant evidence abstain in Materials Only;
+never auto-fallback in that mode or broaden a document selection. Context Guided
+may use labelled general reasoning without citations under the Milestone 14 policy.
 
 Authorization precedes retrieval/embeddings/reasoning. Every query is owner-scoped;
 composite FKs bind chunk/index ownership. Only explicitly selected IDs (max five)

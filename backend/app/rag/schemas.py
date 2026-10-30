@@ -64,7 +64,37 @@ class Citation(Evidence):
 
 class GroundedAnswer(AnswerRecommendation):
     reasoning_mode: Literal["context_guided", "materials_only"]
-    grounding_status: Literal["document_supported", "mixed", "insufficient_evidence"]
+    grounding_status: Literal[
+        "document_supported", "mixed", "general_reasoning", "insufficient_evidence"
+    ]
     retrieval_method: Literal["semantic_pgvector", "lexical", "none"]
     citations: list[Citation]
     general_reasoning: list[str]
+
+    @model_validator(mode="after")
+    def attribution(self):
+        has_answer = self.status in ("answered", "uncertain")
+        if self.grounding_status == "general_reasoning":
+            if (
+                self.reasoning_mode != "context_guided"
+                or self.citations
+                or not self.general_reasoning
+                or not has_answer
+            ):
+                raise ValueError("General reasoning must be uncited and explicitly labelled")
+        elif self.grounding_status == "insufficient_evidence":
+            if (
+                self.status != "insufficient_information"
+                or self.citations
+                or self.general_reasoning
+            ):
+                raise ValueError("Abstention cannot claim source support")
+        elif has_answer and not self.citations:
+            raise ValueError("Document attribution requires real citations")
+        if self.reasoning_mode == "materials_only" and (
+            self.general_reasoning or (has_answer and self.grounding_status != "document_supported")
+        ):
+            raise ValueError("Materials Only cannot use general reasoning")
+        if self.grounding_status == "document_supported" and self.general_reasoning:
+            raise ValueError("Mixed support must be labelled mixed")
+        return self

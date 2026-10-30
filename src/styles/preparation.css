@@ -11,3 +11,5 @@
 @media(max-width:950px){.session-summary{grid-template-columns:1fr}.session-summary .library-actions{max-width:none}.session-preparation h1{font-size:var(--sg-type-title);line-height:1.2}.session-preparation h1 br{display:none}}
 @media(max-width:700px){.preparation-panel{padding:var(--space-5)}.purpose-options{grid-template-columns:1fr}.preparation-actions .button-primary{margin-left:0}.preparation-actions .button{flex:1}.session-preparation .reasoning-controls{padding:var(--space-3)}}
 @media(forced-colors:active){.purpose-options > label:has(input:checked){outline:1px solid Highlight}.preparation-panel,.session-summary,.session-confirm{border-color:ButtonText}}
+
+.purpose-copy { display:grid; min-width:0; gap:var(--space-2); }.purpose-copy .capture-privacy { margin:0; }

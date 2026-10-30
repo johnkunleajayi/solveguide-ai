@@ -95,6 +95,17 @@ def grounded_result(observation, mode, retrieved, draft=None, limitation=None, r
             "Try General mode explicitly if appropriate.",
             reason="no_validated_citations",
         )
+    general_reasoning = list(draft.general_reasoning)
+    if mode == "context_guided":
+        required = {"answer", "explanation"} | {
+            f"key_point:{i}" for i in range(len(answer.key_points))
+        }
+        covered = set().union(*refs.values()) if refs else set()
+        if not required <= covered and not general_reasoning:
+            general_reasoning = [
+                "Parts without a cited support target use general model reasoning, "
+                "not document evidence."
+            ]
     citations = [
         Citation(**evidence[key].model_dump(), supports=sorted(targets))
         for key, targets in sorted(refs.items())
@@ -111,10 +122,10 @@ def grounded_result(observation, mode, retrieved, draft=None, limitation=None, r
     return GroundedAnswer(
         **answer.model_dump(),
         reasoning_mode=mode,
-        grounding_status="mixed" if draft.general_reasoning else "document_supported",
+        grounding_status="mixed" if general_reasoning else "document_supported",
         retrieval_method=retrieved.method,
         citations=citations,
-        general_reasoning=draft.general_reasoning,
+        general_reasoning=general_reasoning,
     )
 
 
@@ -185,6 +196,56 @@ class RagService:
             ) from None
         return {"status": "ready", "unchanged": False}
 
+    async def general_fallback(self, owner, request, retrieved, context, reason):
+        if request.mode != "context_guided":
+            raise PlatformError(
+                "invalid_reasoning_mode", "General supplementation requires Context Guided.", 409
+            )
+        # Only Context Guided may supplement absent support; never reuse untrusted
+        # document text in this general request or present it as cited evidence.
+        ids = [UUID(value) for value in request.document_ids]
+        await self.repository.selection(owner, ids)
+        await self.repository.validate(owner, retrieved.snapshots)
+        answer = (
+            await self.answer_service.recommend(request.observation, context=context)
+            if context is not None
+            else await self.answer_service.recommend(request.observation)
+        )
+        await self.repository.selection(owner, ids)
+        await self.repository.validate(owner, retrieved.snapshots)
+        emit(
+            "answer_decision",
+            mode="context_guided",
+            outcome=answer.status,
+            reason=reason,
+            citation_count=0,
+            method=retrieved.method,
+        )
+        if answer.status in ("insufficient_information", "unsupported"):
+            return grounded_result(
+                request.observation,
+                "context_guided",
+                retrieved,
+                limitation=answer.explanation,
+                reason="general_provider_abstention",
+            )
+        notice = (
+            "This recommendation and explanation use general model knowledge, "
+            "not selected-document evidence."
+        )
+        if reason == "contradictory_document_evidence":
+            notice += " Selected passages were contradictory and are not cited."
+        else:
+            notice += " The selected passages did not provide validated support."
+        return GroundedAnswer(
+            **answer.model_dump(),
+            reasoning_mode="context_guided",
+            grounding_status="general_reasoning",
+            retrieval_method=retrieved.method,
+            citations=[],
+            general_reasoning=[notice],
+        )
+
     @span("grounded_answer")
     async def recommend(self, owner, request, context=None):
         if request.mode == "general":
@@ -193,6 +254,15 @@ class RagService:
                 if context is not None
                 else await self.answer_service.recommend(request.observation)
             )
+        try:
+            async with asyncio.timeout(self.settings.answer_timeout_seconds):
+                return await self.recommend_selected(owner, request, context)
+        except TimeoutError:
+            raise AnswerError(
+                "answer_timeout", "Context-aware reasoning timed out. Try again.", 504
+            ) from None
+
+    async def recommend_selected(self, owner, request, context):
         ids = [UUID(value) for value in request.document_ids]
         # Ownership before consent/provider execution; never broaden selection on failure.
         await self.repository.selection(owner, ids)
@@ -231,6 +301,10 @@ class RagService:
             )
         retrieved = await self.retriever.retrieve(owner, ids, request.observation)
         if not retrieved.evidence:
+            if request.mode == "context_guided":
+                return await self.general_fallback(
+                    owner, request, retrieved, context, "no_relevant_document_support"
+                )
             return grounded_result(
                 request.observation,
                 request.mode,
@@ -252,6 +326,20 @@ class RagService:
                     )
                 ).model_dump()
             )
+            if request.mode == "context_guided" and (
+                not draft.sufficient_evidence
+                or draft.contradictory_evidence
+                or (draft.recommendation.status in ("answered", "uncertain") and not draft.support)
+            ):
+                return await self.general_fallback(
+                    owner,
+                    request,
+                    retrieved,
+                    context,
+                    "contradictory_document_evidence"
+                    if draft.contradictory_evidence
+                    else "no_validated_document_support",
+                )
             result = grounded_result(request.observation, request.mode, retrieved, draft)
         except (AnswerError, PlatformError):
             raise

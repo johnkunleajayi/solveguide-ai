@@ -998,7 +998,7 @@ Session Preparation, persistent learning session, monetization or learning histo
 | Mode | Contract |
 | --- | --- |
 | General | Default; bypasses document lookup, retrieval and embeddings, even with UI selections. |
-| Context Guided | Selected passages are preferred evidence; supplementary model reasoning appears separately and is not presented as document evidence. |
+| Context Guided | Prefer relevant selected passages; insufficient document support permits clearly labelled general reasoning with no fabricated citations. |
 | Materials Only | Selected evidence exclusively; answer, explanation and every key point need source references. Missing, irrelevant, conflicting, unavailable or unverified support produces abstention. |
 
 Selection and mode are workspace-memory preferences, not persistent sessions. Selecting
@@ -1084,7 +1084,7 @@ are supplied to the reasoning provider.
 GroundedDraft contains the existing recommendation, sufficiency/conflict assessment,
 per-field support references, public limitation and separately labelled general reasoning.
 Materials Only additionally makes a separate structured support-verification call, within
-the answer deadline. Any rejection/conflict abstains with zero answer confidence. Backend
+the answer deadline. In Materials Only, any rejection/conflict abstains with zero answer confidence. Backend
 validation checks observed option labels/counts/types and every citation against retrieved
 chunk IDs; required Materials Only answer/explanation/key-point coverage fails closed.
 Citations are constructed from actual repository evidence, including current document ID,
@@ -1188,3 +1188,19 @@ backend and desktop PowerShell terminals before restarting. See
 contain validated correlation IDs and safe classifications, never learning content
 or credentials. Native session validation uses a bounded 12-second deadline, a compact owned readiness
 projection, and overlap-only request coalescing; see the diagnostic guide for details.
+
+
+## Milestone 14: purpose simplification and Context Guided correction
+
+Preparation now offers Interview Preparation, Research & Study, and General / Custom.
+All purposes support every existing question format. General / Custom permits a
+blank objective with a general-assistance default; other purposes require an objective.
+Legacy preparations/active sessions remain readable without mutation or a migration.
+Explicit edits map old categories and retain revision checks.
+
+Context Guided can recommend from general knowledge when selected evidence is
+insufficient. Such results are explicitly labelled and have no document citations.
+Materials Only remains strictly evidence-bound and abstains without support; General
+still performs no retrieval. Authentication, ownership, consent, session authority,
+Live Monitor cancellation and ephemeral learning content are preserved.
+See [Milestone 14 architecture and manual review](docs/MILESTONE_14.md).

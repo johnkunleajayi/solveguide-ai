@@ -78,3 +78,12 @@ test('automatic results display citations and abstention without a fake retry ac
 test('panel lifecycle polling cannot start a monitor and dismissal does not stop it',async()=>{
  const calls=[];const c=createMonitorController(async op=>{calls.push(op.kind);return initial});await c.refresh();await c.command({kind:'expand',expanded:true});await c.command({kind:'hide_panel'});c.dispose();assert.deepEqual(calls,['snapshot','expand','hide_panel'])
 })
+
+
+test('floating monitor accepts Context Guided general-only attribution without accepting Materials Only bypasses',()=>{
+ const raw={...recommendation,reasoning_mode:'context_guided',grounding_status:'general_reasoning',retrieval_method:'lexical',citations:[],general_reasoning:['General model knowledge, not document evidence.']}
+ const parsed=types.parseMonitor({...active,mode:'context_guided',documentIds:['owned'],answer:raw})
+ assert.equal(parsed.answer.grounding.grounding_status,'general_reasoning')
+ assert.equal(parsed.answer.grounding.citations.length,0)
+ assert.throws(()=>types.parseMonitor({...active,mode:'materials_only',documentIds:['owned'],answer:{...raw,reasoning_mode:'materials_only'}}))
+})

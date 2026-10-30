@@ -4,8 +4,9 @@
 
 The authenticated desktop now prepares Purpose → Objective → Reference Materials →
 Reasoning Mode → Review → Start Session before opening the existing manual workspace.
-There is no Live Question Monitor, automatic capture, automatic provider request or
-persistent question/answer history. No website changes or new dependencies are required.
+Preparation does not start monitoring, capture or provider requests. Live Monitor
+requires separate explicit activation after session start. There is no persistent
+question/answer history. No website changes or new dependencies are required.
 
 `src/learning` owns typed native transport, runtime DTO checks and recovery/lifecycle
 state. `LearningWorkspace` presents preparation and a compact active summary.
@@ -16,9 +17,12 @@ session credential, URL or filesystem capability.
 `backend/app/learning` separates strict schemas, SQLAlchemy metadata, owner-scoped
 repository, lifecycle service and authenticated API. Existing Context Library and RAG
 remain the only document/index/retrieval systems. No document is selected automatically.
-At most five explicit references are allowed. Objectives are required, trimmed and
-bounded to 2,000 characters; custom purposes are required only for Custom Purpose
-and bounded to 100 characters. Saved drafts must satisfy these basic field constraints;
+At most five explicit references are allowed. The three purpose choices are Interview
+Preparation, Research & Study, and General / Custom. All permit every observed
+question format. Objectives are trimmed and bounded to 2,000 characters. Interview
+and Research require readable objectives; blank General / Custom objectives use
+the general-assistance default. Invalid controls and overlong input are rejected.
+The legacy custom-purpose metadata field remains bounded to 100 characters. Saved drafts must satisfy these basic field constraints;
 incomplete editing remains local until Save Draft. A readiness review additionally
 validates grounded material readiness and passage-transmission consent.
 
@@ -70,8 +74,10 @@ active preparation exists; they cannot bypass an active session's configuration.
 
 General routes directly to the existing AnswerService without document retrieval.
 Context Guided and Materials Only use the existing RagService with the authoritative
-selection and consent; existing citations, independent support verification and
-Materials Only abstention remain unchanged. The backend checks the session again after
+selection and consent. Context Guided can use clearly labelled general reasoning
+when selected evidence is insufficient, with no citations in that result. Materials
+Only still requires evidence and independent support verification, and abstains
+without sufficient support. See MILESTONE_14.md for attribution and compatibility. The backend checks the session again after
 provider completion and rejects late results after end/replacement/material deletion.
 RAG retains its index-generation checks. No database transaction spans provider I/O.
 Purpose/objective are untrusted educational intent, not instructions overriding mode,
@@ -169,3 +175,16 @@ Start backend with `npm.cmd run backend` and desktop in another terminal with
 
 Milestone 13 may consume the typed active-session endpoint. No monitor, background
 capture, floating UI or automatic AI behavior is implemented here.
+
+
+## Milestone 14 purpose compatibility
+
+No schema migration is needed. New writes use existing `interview_preparation`,
+`research_study`, or `custom` values. Legacy `general_learning` maps to General /
+Custom, `certification_practice` to Research & Study, and
+`technical_assessment_practice` to Interview Preparation for display and explicit
+edits. Existing Interview, Research and Custom values retain their corresponding
+category. Reads/recovery never rewrite purpose, custom label, objective or revision.
+A new General / Custom record fills the legacy required custom label with
+`General / Custom`; historical custom labels survive explicit edits in that category.
+Revision validation and end-and-replace confirmation remain mandatory.

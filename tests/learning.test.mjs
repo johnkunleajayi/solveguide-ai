@@ -106,6 +106,8 @@ test('the session presentation gates core tools and exposes recovery/end control
   assert.match(html({...base,phase:'loading'}),/Recovering your session/)
   assert.equal(mounted,0)
   const prep=html(base)
+  assert.equal((prep.match(/name="session-purpose"/g)??[]).length,3)
+  assert.match(prep,/Interview Preparation/);assert.match(prep,/Research &amp; Study/);assert.match(prep,/General \/ Custom/)
   assert.match(prep,/Purpose/);assert.match(prep,/Objective/);assert.match(prep,/Reference Materials/);assert.match(prep,/Reasoning Mode/);assert.match(prep,/Start Session/)
   assert.equal(mounted,0)
   const active=html({...base,active:session({status:'active'})})
@@ -121,3 +123,28 @@ test('the session presentation gates core tools and exposes recovery/end control
   pending.resolve({active:null,draft:session()});await old
   assert.equal(c.getSnapshot().active.status,'active');assert.equal(c.getSnapshot().draft,null)
  })
+
+
+test('exactly three purpose choices map legacy values without mutating recovered records', () => {
+ assert.deepEqual(Object.values(types.purposes), ['Interview Preparation', 'Research & Study', 'General / Custom'])
+ const expected = { general_learning:'custom', certification_practice:'research_study', technical_assessment_practice:'interview_preparation', interview_preparation:'interview_preparation', research_study:'research_study', custom:'custom' }
+ for (const [purpose, current] of Object.entries(expected)) {
+  const original=session({purpose, custom_purpose:purpose==='custom'?'Original custom label':null,status:'active',revision:8})
+  const before=structuredClone(original)
+  assert.equal(types.parseSession(original).purpose,purpose)
+  assert.equal(types.purposeMap[purpose],current)
+  assert.equal(types.purposeLabel(purpose),types.purposes[current])
+  assert.deepEqual(original,before)
+ }
+})
+
+test('General Custom permits blank objectives while other purposes require readable input', () => {
+ for (const value of ['', '   ']) {
+  assert.equal(types.objectiveFor(value,'custom'),types.defaultObjective)
+  assert.equal(types.validPreparationObjective(value,'custom'),true)
+  assert.equal(types.validPreparationObjective(value,'interview_preparation'),false)
+  assert.equal(types.validPreparationObjective(value,'research_study'),false)
+ }
+ for(const value of ['x'.repeat(2001),'\u0000','\u001c']) assert.equal(types.validPreparationObjective(value,'custom'),false)
+ assert.equal(types.objectiveFor(' Learn mathematics ','custom'),'Learn mathematics')
+})

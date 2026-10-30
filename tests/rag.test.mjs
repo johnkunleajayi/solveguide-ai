@@ -169,3 +169,17 @@ test('selected-source changes synchronously clear answers and unsubscribe on log
   unsubscribe(); await a.request(observation); notifyLibraryChange(id)
   assert.equal(a.getSnapshot().result, answer)
 })
+
+
+test('Context Guided can render clearly attributed general reasoning without citations', () => {
+ const raw={...answer,reasoning_mode:'context_guided',grounding_status:'general_reasoning',retrieval_method:'lexical',citations:[],general_reasoning:['General model knowledge, not selected-document evidence.']}
+ const result=parseGroundedAnswer(raw,observation,{...options,mode:'context_guided'})
+ assert.equal(result.answer_text,answer.answer_text)
+ assert.deepEqual(result.grounding.citations,[])
+ const markup=render(React.createElement(AnswerRecommendationView,{state:{phase:'ready',result,error:null},observation,onRequest:noop,onCancel:noop,enabled:true}))
+ assert.match(markup,/General reasoning · not document-supported/)
+ assert.match(markup,/not selected-document evidence/)
+ assert.doesNotMatch(markup,/Open source document/)
+ for(const forged of [{...raw,citations:grounded.citations},{...raw,grounding_status:'document_supported'},{...raw,general_reasoning:[]}]) assert.throws(()=>parseGroundedAnswer(forged,observation,{...options,mode:'context_guided'}))
+ assert.throws(()=>parseGroundedAnswer({...raw,reasoning_mode:'materials_only'},observation,options))
+})
