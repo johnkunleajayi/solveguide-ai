@@ -321,3 +321,103 @@ mod tests {
         assert!(s.enter().is_ok());
     }
 }
+
+// One bounded frame; no image or source handles are persisted. Live sampling never
+// uses HiddenWindow, so it cannot restore or focus the main application.
+pub(crate) struct Frame {
+    pub source: Source,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+impl Frame {
+    pub(crate) fn encode(self) -> Result<CaptureResult> {
+        use base64::Engine;
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, self.width, self.height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder
+                .write_header()
+                .map_err(|_| error("encoding_failed", "Could not prepare the image."))?;
+            writer
+                .write_image_data(&self.pixels)
+                .map_err(|_| error("encoding_failed", "Could not prepare the image."))?;
+        }
+        if bytes.len() > 10 * 1024 * 1024 {
+            return Err(error(
+                "image_too_large",
+                "Choose a smaller source (10 MiB PNG limit).",
+            ));
+        }
+        Ok(CaptureResult {
+            source: self.source,
+            width: self.width,
+            height: self.height,
+            format: "image/png",
+            captured_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            image_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
+    }
+}
+pub(crate) fn monitor_source(state: &CaptureState, request: &Request) -> Result<Source> {
+    resolve(&state.sources.lock().map_err(|_| unavailable())?, request)
+}
+pub(crate) fn sample(
+    state: &CaptureState,
+    source: Source,
+    cancelled: &AtomicBool,
+    target: &MonitorTarget,
+) -> Result<Frame> {
+    let _busy = state.enter()?;
+    #[cfg(windows)]
+    {
+        windows::capture_frame(source, Some(cancelled), Some(&target.target))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (source, cancelled, target);
+        Err(error(
+            "unsupported_platform",
+            "Live Monitor requires Windows.",
+        ))
+    }
+}
+
+// An identity reference, not a running capture session or frame buffer.
+pub(crate) struct MonitorTarget {
+    #[cfg(windows)]
+    target: windows::Target,
+}
+impl MonitorTarget {
+    pub(crate) fn closed(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.target.is_closed()
+        }
+        #[cfg(not(windows))]
+        {
+            true
+        }
+    }
+}
+pub(crate) fn monitor_target(source: &Source) -> Result<MonitorTarget> {
+    #[cfg(windows)]
+    {
+        Ok(MonitorTarget {
+            target: windows::Target::new(source)?,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = source;
+        Err(error(
+            "unsupported_platform",
+            "Live Monitor requires Windows.",
+        ))
+    }
+}

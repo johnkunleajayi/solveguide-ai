@@ -13,6 +13,69 @@ class SessionRepository:
     def __init__(self, database):
         self.database = database
 
+    async def liveness(self, owner, identifier):
+        statement = (
+            select(
+                LearningSession.id,
+                LearningSession.revision,
+                LearningSession.status,
+                LearningSession.mode,
+                LearningSession.selected_count,
+                LearningSession.allow_context_transmission,
+                SessionDocument.document_id,
+                ContextDocument.extraction_status,
+                DocumentIndex.status.label("index_status"),
+                DocumentIndex.generation,
+            )
+            .outerjoin(
+                SessionDocument,
+                and_(
+                    SessionDocument.session_id == LearningSession.id,
+                    SessionDocument.owner_id == owner,
+                    LearningSession.mode != "general",
+                ),
+            )
+            .outerjoin(
+                ContextDocument,
+                and_(
+                    ContextDocument.id == SessionDocument.document_id,
+                    ContextDocument.owner_id == owner,
+                ),
+            )
+            .outerjoin(
+                DocumentIndex,
+                and_(
+                    DocumentIndex.document_id == ContextDocument.id,
+                    DocumentIndex.owner_id == owner,
+                ),
+            )
+            .where(LearningSession.owner_id == owner, LearningSession.id == identifier)
+            .order_by(SessionDocument.ordinal)
+        )
+        async with self.database.transaction() as db:
+            rows = (await db.execute(statement)).mappings().all()
+        if not rows:
+            return None
+        first = rows[0]
+        return dict(
+            id=str(first["id"]),
+            revision=first["revision"],
+            status=first["status"],
+            mode=first["mode"],
+            selected_count=first["selected_count"],
+            allow_context_transmission=first["allow_context_transmission"],
+            documents=[
+                dict(
+                    id=str(r["document_id"]),
+                    extraction_status=r["extraction_status"],
+                    index_status=r["index_status"],
+                    index_generation=str(r["generation"]) if r["generation"] else None,
+                )
+                for r in rows
+                if r["document_id"] is not None
+            ],
+        )
+
     @asynccontextmanager
     async def transaction(self, owner):
         async with self.database.transaction() as db:
@@ -61,8 +124,10 @@ class Transaction:
         # create a valid-looking preparation containing a pending-deletion document.
         docs = list(
             (
-                await self.db.scalars(
-                    select(ContextDocument)
+                await self.db.execute(
+                    select(
+                        ContextDocument.id, ContextDocument.title, ContextDocument.extraction_status
+                    )
                     .where(ContextDocument.owner_id == self.owner, ContextDocument.id.in_(ids))
                     .with_for_update()
                 )
@@ -78,12 +143,14 @@ class Transaction:
             ).all()
         )
         readiness = {i.document_id: i.status for i in indexes}
+        generations = {i.document_id: str(i.generation) for i in indexes}
         found = {
             d.id: dict(
                 id=str(d.id),
                 title=d.title,
                 extraction_status=d.extraction_status,
                 index_status=readiness.get(d.id, "not_indexed"),
+                index_generation=generations.get(d.id),
             )
             for d in docs
         }

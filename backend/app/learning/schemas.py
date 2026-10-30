@@ -62,6 +62,7 @@ class SessionAnswerRequest(StrictModel):
 
 
 class DocumentReference(StrictModel):
+    index_generation: DocumentId | None = None
     id: DocumentId
     title: str
     extraction_status: Literal["ready", "insufficient", "failed", "deleting"]
@@ -91,3 +92,20 @@ class SessionView(StrictModel):
 class PreparationState(StrictModel):
     draft: SessionView | None
     active: SessionView | None
+
+
+class LivenessDocument(StrictModel):
+    id: DocumentId
+    extraction_status: Literal["ready"]
+    index_status: Literal["ready"]
+    index_generation: DocumentId
+
+
+class SessionLiveness(StrictModel):
+    id: DocumentId
+    revision: int
+    status: Literal["active"]
+    mode: Mode
+    ready: Literal[True]
+    documents: list[LivenessDocument]
+    document_ids: list[DocumentId]

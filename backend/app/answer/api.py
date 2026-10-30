@@ -1,8 +1,4 @@
-import json
-import logging
-import time
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
 
@@ -11,12 +7,12 @@ from app.answer.schemas import AnswerRecommendation
 from app.answer.service import AnswerService
 from app.auth.dependencies import required_current_user
 from app.auth.models import User
+from app.diagnostics import outcome
 from app.learning.schemas import SessionAnswerRequest
 from app.rag.schemas import GroundedAnswer, ReasoningRequest
 from app.schemas import QuestionObservation
 
 router = APIRouter()
-logger = logging.getLogger("solveguide.answer")
 
 
 def get_answer_service(request: Request) -> AnswerService:
@@ -34,8 +30,6 @@ async def suggested_answer(
     request: Request,
     user: Annotated[User, Depends(required_current_user)],
 ) -> AnswerRecommendation | GroundedAnswer:
-    started = time.monotonic()
-    outcome = "failed"
     try:
         learning = request.app.state.learning_service
         if isinstance(observation, SessionAnswerRequest):
@@ -50,19 +44,8 @@ async def suggested_answer(
                 else await service.recommend(observation)
             )
             await learning.guard_legacy(user.id)
-        outcome = result.status
+        outcome(result.status)
         return result
     except AnswerError as error:
-        outcome = error.code
+        outcome(error.code, error=True)
         raise
-    finally:
-        logger.info(
-            json.dumps(
-                {
-                    "event": "answer_request",
-                    "request_id": str(uuid4()),
-                    "outcome": outcome,
-                    "duration_ms": round((time.monotonic() - started) * 1000),
-                }
-            )
-        )

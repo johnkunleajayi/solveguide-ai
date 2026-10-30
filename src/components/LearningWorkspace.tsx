@@ -43,7 +43,7 @@ export function SessionContent({ state, controller, workspaceProps }: { state: L
     </section>
     {state.message && <p className="capture-error" role="alert">{state.message}</p>}
     {active.issues.map(issue => <p className="capture-error" role="status" key={issue}>{issue}</p>)}
-    {state.phase === 'ready' ? <AnswerWorkspace key={`${active.id}:${active.revision}:${active.ready}:${active.document_ids.join(',')}`} {...workspaceProps} preparation={active} /> : <p role="status">Session access is paused until its state can be confirmed.</p>}
+    {state.phase === 'ready' ? <AnswerWorkspace key={`${active.id}:${active.revision}:${active.ready}:${active.document_ids.join(',')}:${active.documents.map(d=>d.index_generation??'').join(',')}`} {...workspaceProps} preparation={active} /> : <p role="status">Session access is paused until its state can be confirmed.</p>}
   </>
   return <>
     {state.ended && <p className="analysis-notice" role="status">Session ended. Live question and answer content was not saved.</p>}

@@ -17,6 +17,7 @@ from app.answer.errors import AnswerError
 from app.answer.prompt import ANSWER_INSTRUCTIONS, answer_input
 from app.answer.schemas import AnswerRecommendation
 from app.config import Settings
+from app.diagnostics import emit, span
 from app.rag.prompt import GROUNDED_INSTRUCTIONS, VERIFY_INSTRUCTIONS
 from app.rag.schemas import GroundedDraft, GroundingCheck
 from app.schemas import QuestionObservation
@@ -65,6 +66,17 @@ class OpenAIAnswerProvider:
                         ),
                         GroundingCheck,
                     )
+                    emit(
+                        "support_verification",
+                        outcome="supported"
+                        if check.supported and not check.contradictory
+                        else "rejected",
+                        reason="contradictory_evidence"
+                        if check.contradictory
+                        else "support_verified"
+                        if check.supported
+                        else "support_verification_failed",
+                    )
                     if not check.supported or check.contradictory:
                         draft.sufficient_evidence = False
                         draft.contradictory_evidence = check.contradictory
@@ -75,6 +87,7 @@ class OpenAIAnswerProvider:
                 "answer_timeout", "Grounding verification timed out. Try again.", 504
             ) from None
 
+    @span("answer_provider")
     async def _parse(self, instructions, task_input, schema):
         if not self.settings.provider_configured:
             raise AnswerError(

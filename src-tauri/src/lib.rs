@@ -1,12 +1,15 @@
 mod auth;
 mod capture;
 mod context_library;
+mod diagnostics;
 mod learning;
+mod monitor;
 mod privacy;
 use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .manage(auth::AuthState::default())
+        .manage(monitor::MonitorState::default())
         .manage(std::sync::Arc::new(capture::CaptureState::default()))
         .invoke_handler(tauri::generate_handler![
             capture::list_capture_sources,
@@ -20,9 +23,25 @@ pub fn run() {
             auth::ai_cancel,
             context_library::library_request,
             learning::session_request,
+            monitor::monitor_control,
             privacy::privacy_get_state,
             privacy::privacy_set_enabled
         ])
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            {
+                window.state::<monitor::MonitorState>().stop(
+                    window.app_handle(),
+                    false,
+                    "stopped",
+                    "Application closed.",
+                );
+                if let Some(panel) = window.app_handle().get_webview_window("answer-panel") {
+                    let _ = panel.destroy();
+                }
+            }
+        })
         .setup(|app| {
             // Keep the WebView profile and local appearance storage in the official workspace.
             let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -45,6 +64,19 @@ pub fn run() {
             window.show()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run SolveGuide AI");
+        .build(tauri::generate_context!())
+        .expect("failed to build SolveGuide AI")
+        .run(|app, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                app.state::<monitor::MonitorState>().stop(
+                    app,
+                    false,
+                    "stopped",
+                    "Application closed.",
+                );
+            }
+        });
 }

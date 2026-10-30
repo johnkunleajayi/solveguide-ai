@@ -1,20 +1,16 @@
-import json
-import logging
-import time
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
 from app.auth.dependencies import required_current_user
+from app.diagnostics import outcome
 from app.errors import VisionError
 from app.images import validate_image
 from app.schemas import QuestionObservation, VisionRequest
 from app.service import VisionService
 
 router = APIRouter()
-logger = logging.getLogger("solveguide.vision")
 
 
 def get_service(request: Request) -> VisionService:
@@ -42,26 +38,11 @@ async def health(request: Request) -> dict:
 async def observe_question(
     payload: VisionRequest, service: Annotated[VisionService, Depends(get_service)]
 ) -> QuestionObservation:
-    started = time.monotonic()
-    request_id = str(uuid4())
-    status = "failed"
     try:
         image = await run_in_threadpool(validate_image, payload)
         observation = await service.observe(image)
-        status = observation.status
+        outcome(observation.status)
         return observation
     except VisionError as error:
-        status = error.code
+        outcome(error.code, error=True)
         raise
-    finally:
-        # Whitelist log fields. Never include payloads, observations, exception text or credentials.
-        logger.info(
-            json.dumps(
-                {
-                    "event": "vision_request",
-                    "request_id": request_id,
-                    "outcome": status,
-                    "duration_ms": round((time.monotonic() - started) * 1000),
-                }
-            )
-        )

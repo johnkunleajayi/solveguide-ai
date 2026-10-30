@@ -6,7 +6,14 @@ from fastapi import APIRouter, Depends, Request
 from app.auth.dependencies import required_current_user
 from app.auth.models import User
 from app.context_library.api import json_body
-from app.learning.schemas import DraftInput, PreparationState, Revision, SessionView, StartInput
+from app.learning.schemas import (
+    DraftInput,
+    PreparationState,
+    Revision,
+    SessionLiveness,
+    SessionView,
+    StartInput,
+)
 
 router = APIRouter(prefix="/api/v1/learning", dependencies=[Depends(required_current_user)])
 CurrentUser = Annotated[User, Depends(required_current_user)]
@@ -46,3 +53,9 @@ async def active(request: Request, user: CurrentUser):
 async def end(identifier: UUID, request: Request, user: CurrentUser):
     value = await json_body(request, Revision, 1024)
     return await request.app.state.learning_service.end(user.id, identifier, value.revision)
+
+
+@router.post("/sessions/{identifier}/validate", response_model=SessionLiveness)
+async def validate(identifier: UUID, request: Request, user: CurrentUser):
+    value = await json_body(request, Revision, 1024)
+    return await request.app.state.learning_service.liveness(user.id, identifier, value.revision)

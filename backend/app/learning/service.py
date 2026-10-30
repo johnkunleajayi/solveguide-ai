@@ -1,7 +1,9 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.database import PlatformError
+from app.diagnostics import emit, span
 from app.learning.models import LearningSession
 from app.rag.schemas import ReasoningRequest
 
@@ -11,6 +13,7 @@ def fail(
     message="Preparation changed. Refresh and review it again.",
     status=409,
 ):
+    emit("session_validation_failed", level=logging.DEBUG, error_code=code, status=status)
     raise PlatformError(code, message, status)
 
 
@@ -64,8 +67,69 @@ class SessionService:
                 active=await self.view(tx, await tx.current(["active"])),
             )
 
+    @span("active_session_lookup")
     async def active(self, owner):
-        return (await self.read(owner))["active"]
+        async with self.repository.transaction(owner) as tx:
+            active = await self.view(tx, await tx.current(["active"]))
+        emit(
+            "active_session_lookup",
+            level=logging.DEBUG,
+            owner_id=owner,
+            session_id=active["id"] if active else None,
+            revision=active["revision"] if active else None,
+            state="active" if active else "no_active_session",
+            mode=active["mode"] if active else None,
+        )
+        return active
+
+    @span("session_liveness")
+    async def liveness(self, owner, identifier, revision):
+        value = await self.repository.liveness(owner, identifier)
+        if value is None:
+            fail("preparation_not_found", "This session is unavailable.", 404)
+        if value["revision"] != revision:
+            emit(
+                "session_revision_check",
+                level=logging.WARNING,
+                session_id=identifier,
+                expected_revision=revision,
+                actual_revision=value["revision"],
+                reason="revision_mismatch",
+            )
+            fail("session_revision_mismatch", "The session revision changed.")
+        if value["status"] != "active":
+            fail("session_not_active", "This session is no longer active.")
+        docs = value["documents"]
+        if value["mode"] != "general" and (
+            not docs
+            or len(docs) != value["selected_count"]
+            or not value["allow_context_transmission"]
+            or any(
+                d["extraction_status"] != "ready"
+                or d["index_status"] != "ready"
+                or not d["index_generation"]
+                for d in docs
+            )
+        ):
+            fail("session_materials_not_ready", "Session materials changed or are not ready.")
+        emit(
+            "session_liveness",
+            level=logging.DEBUG,
+            session_id=identifier,
+            revision=revision,
+            mode=value["mode"],
+            selected_count=len(docs),
+            outcome="active",
+        )
+        return dict(
+            id=value["id"],
+            revision=value["revision"],
+            status="active",
+            mode=value["mode"],
+            ready=True,
+            documents=docs,
+            document_ids=[d["id"] for d in docs],
+        )
 
     async def save(self, owner, payload):
         async with self.repository.transaction(owner) as tx:
@@ -99,9 +163,31 @@ class SessionService:
     async def owned(self, tx, identifier, revision):
         row = await tx.get(UUID(str(identifier)))
         if row is None:
+            emit(
+                "session_lookup",
+                level=logging.WARNING,
+                session_id=identifier,
+                reason="ownership_scope_miss",
+            )
             fail("preparation_not_found", "This preparation is unavailable.", 404)
         if row.revision != revision:
+            emit(
+                "session_revision_check",
+                level=logging.WARNING,
+                session_id=row.id,
+                expected_revision=revision,
+                actual_revision=row.revision,
+                reason="revision_mismatch",
+            )
             fail()
+        emit(
+            "session_lookup",
+            level=logging.DEBUG,
+            session_id=row.id,
+            revision=row.revision,
+            state=row.status,
+            reason="owned",
+        )
         return row
 
     async def check_ready(self, tx, row):
@@ -189,6 +275,14 @@ class SessionService:
                     "Session materials or readiness changed. End this session and review a "
                     "new preparation.",
                 )
+            emit(
+                "session_configuration",
+                level=logging.DEBUG,
+                session_id=row.id,
+                revision=row.revision,
+                mode=row.mode,
+                selected_count=len(ids),
+            )
             return dict(
                 id=str(row.id),
                 revision=row.revision,

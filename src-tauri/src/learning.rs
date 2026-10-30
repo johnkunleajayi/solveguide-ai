@@ -3,6 +3,7 @@ use crate::auth::{authorize, error, AuthError, AuthState};
 use crate::context_library::{identifier, Request};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Draft {
@@ -129,11 +130,22 @@ fn prepare(operation: Operation) -> Result<Request, AuthError> {
 }
 #[tauri::command]
 pub async fn session_request(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     state: tauri::State<'_, AuthState>,
     operation: Operation,
 ) -> Result<serde_json::Value, AuthError> {
     authorize(&window)?;
+    if matches!(&operation, Operation::End { .. } | Operation::Start { .. }) {
+        app.state::<crate::monitor::MonitorState>()
+            .log_action("stop", "session_transition");
+        app.state::<crate::monitor::MonitorState>().stop(
+            &app,
+            false,
+            "stopped",
+            "Learning session transition. Monitoring stopped.",
+        );
+    }
     state
         .learning_request(state.session_epoch(), prepare(operation)?)
         .await

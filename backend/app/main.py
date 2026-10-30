@@ -1,4 +1,3 @@
-import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -22,6 +21,7 @@ from app.context_library.api import router as context_router
 from app.context_library.service import ContextService
 from app.context_library.storage import LocalDocumentStorage
 from app.database import Database, PlatformError
+from app.diagnostics import DiagnosticBoundary, configure, outcome
 from app.errors import VisionError
 from app.learning.api import router as learning_router
 from app.learning.repository import SessionRepository
@@ -46,10 +46,7 @@ def create_app(
             settings = Settings()
         except ValidationError:
             raise RuntimeError("Invalid backend configuration. Review backend/.env.") from None
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    # SDK debug logging may include sensitive request bodies. Never enable it here.
-    for name in ("openai", "httpx", "httpcore"):
-        logging.getLogger(name).setLevel(logging.WARNING)
+    configure(settings.solveguide_log_level)
     database = Database(settings)
 
     @asynccontextmanager
@@ -82,13 +79,16 @@ def create_app(
         allowed_hosts=["127.0.0.1", "localhost", urlsplit(settings.auth_public_base_url).hostname],
     )
     app.add_middleware(PlatformCORS)
+    app.add_middleware(DiagnosticBoundary)
 
     @app.exception_handler(VisionError)
     async def vision_error(_: Request, error: VisionError) -> JSONResponse:
+        outcome(error.code, error=True)
         return error_response(error.code, error.message, error.status)
 
     @app.exception_handler(PlatformError)
     async def platform_error(_: Request, error: PlatformError) -> JSONResponse:
+        outcome(error.code, error=True)
         response = error_response(error.code, error.message, error.status)
         if error.status == 401:
             response.headers["WWW-Authenticate"] = "Bearer"
@@ -96,6 +96,7 @@ def create_app(
 
     @app.exception_handler(AnswerError)
     async def answer_error(_: Request, error: AnswerError) -> JSONResponse:
+        outcome(error.code, error=True)
         return error_response(error.code, error.message, error.status)
 
     @app.exception_handler(RequestValidationError)

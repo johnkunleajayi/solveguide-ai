@@ -1,3 +1,5 @@
+import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import Settings
+from app.diagnostics import category, emit
 
 
 class PlatformError(Exception):
@@ -56,6 +59,7 @@ class Database:
             raise PlatformError(
                 "database_not_configured", "Configure DATABASE_URL in backend/.env."
             )
+        started = time.monotonic()
         try:
             async with self.sessions() as session, session.begin():
                 # Poolers may reject startup options. Keep the timeout transaction-local
@@ -64,6 +68,31 @@ class Database:
                 yield session
         except SQLAlchemyError as error:
             code = getattr(getattr(error, "orig", None), "sqlstate", None)
+            safe_code = (
+                code.lower()
+                if isinstance(code, str) and len(code) == 5 and code.isalnum()
+                else None
+            )
+            kind = "database_schema" if code in ("42P01", "42703") else "database_unavailable"
+            reason = (
+                "database_statement_timeout"
+                if code == "57014"
+                else "database_deadlock"
+                if code == "40P01"
+                else "database_lock_unavailable"
+                if code == "55P03"
+                else "database_pool_timeout"
+                if type(error).__name__ == "TimeoutError"
+                else "database_operation_failed"
+            )
+            emit(
+                "database_failure",
+                reason=reason,
+                level=logging.WARNING,
+                error_code=kind,
+                error_category=category(kind),
+                sqlstate=safe_code,
+            )
             if code in ("42P01", "42703"):
                 raise PlatformError(
                     "database_schema", "Apply the Alembic migrations before signing in."
@@ -71,6 +100,13 @@ class Database:
             raise PlatformError(
                 "database_unavailable", "The authentication database is unavailable."
             ) from None
+
+        finally:
+            emit(
+                "database_transaction",
+                level=logging.DEBUG,
+                duration_ms=round((time.monotonic() - started) * 1000),
+            )
 
     async def close(self):
         if self.engine:

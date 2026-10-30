@@ -397,3 +397,211 @@ def test_session_answer_rejects_client_configuration_override(observation_data):
                     **extra,
                 )
             )
+
+
+def test_index_generation_metadata_is_bounded_and_does_not_contain_document_text():
+    from app.learning.schemas import DocumentReference
+
+    reference = DocumentReference(
+        id=str(uuid4()),
+        title="Disposable reference",
+        extraction_status="ready",
+        index_status="ready",
+        index_generation=str(uuid4()),
+    )
+    assert reference.index_generation is not None
+    assert "extracted_text" not in reference.model_dump()
+    with pytest.raises(ValidationError):
+        DocumentReference.model_validate({**reference.model_dump(), "extracted_text": "private"})
+    with pytest.raises(ValidationError):
+        DocumentReference.model_validate({**reference.model_dump(), "index_generation": "invalid"})
+
+
+@pytest.mark.parametrize("mode", ["general", "context_guided", "materials_only"])
+def test_compact_liveness_ownership_revision_and_readiness(mode):
+    owner, identifier, document = uuid4(), uuid4(), uuid4()
+    value = dict(
+        id=str(identifier),
+        revision=3,
+        status="active",
+        mode=mode,
+        selected_count=1,
+        allow_context_transmission=True,
+        documents=[]
+        if mode == "general"
+        else [
+            dict(
+                id=str(document),
+                extraction_status="ready",
+                index_status="ready",
+                index_generation=str(uuid4()),
+            )
+        ],
+    )
+
+    class Repository:
+        async def liveness(self, requested_owner, requested_id):
+            return (
+                deepcopy(value) if (requested_owner, requested_id) == (owner, identifier) else None
+            )
+
+    service = SessionService(Repository())
+
+    async def run():
+        result = await service.liveness(owner, identifier, 3)
+        assert result["ready"] and result["mode"] == mode
+        assert not {"objective", "purpose", "title", "extracted_text"} & result.keys()
+        if mode == "general":
+            assert result["documents"] == []
+        with pytest.raises(PlatformError) as error:
+            await service.liveness(uuid4(), identifier, 3)
+        assert error.value.code == "preparation_not_found"
+        with pytest.raises(PlatformError) as error:
+            await service.liveness(owner, identifier, 2)
+        assert error.value.code == "session_revision_mismatch"
+        value["status"] = "ended"
+        with pytest.raises(PlatformError) as error:
+            await service.liveness(owner, identifier, 3)
+        assert error.value.code == "session_not_active"
+        value["status"] = "active"
+        if mode != "general":
+            for patch in [
+                dict(documents=[]),
+                dict(allow_context_transmission=False),
+                dict(documents=[{**value["documents"][0], "index_status": "indexing"}]),
+            ]:
+                original = deepcopy(value)
+                value.update(patch)
+                with pytest.raises(PlatformError) as error:
+                    await service.liveness(owner, identifier, 3)
+                assert error.value.code == "session_materials_not_ready"
+                value.clear()
+                value.update(original)
+
+    asyncio.run(run())
+
+
+def test_liveness_endpoint_requires_auth_and_preserves_error_codes():
+    owner, identifier = uuid4(), uuid4()
+    app = create_app(Settings(_env_file=None))
+    service = NS(
+        liveness=AsyncMock(side_effect=PlatformError("session_revision_mismatch", "Changed", 409))
+    )
+    app.state.learning_service = service
+    path = f"/api/v1/learning/sessions/{identifier}/validate"
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        headers = {"Origin": "http://tauri.localhost"}
+        assert client.post(path, json={"revision": 1}, headers=headers).status_code == 401
+        service.liveness.assert_not_awaited()
+        app.dependency_overrides[required_current_user] = lambda: NS(id=owner)
+        result = client.post(path, json={"revision": 1}, headers=headers)
+        assert result.status_code == 409
+        assert result.json()["error"]["code"] == "session_revision_mismatch"
+        service.liveness.assert_awaited_once_with(owner, identifier, 1)
+
+
+def test_liveness_is_one_owned_projection_without_lifecycle_locks():
+    from app.learning.repository import SessionRepository
+
+    owner, identifier = uuid4(), uuid4()
+
+    class Database:
+        calls = []
+
+        @asynccontextmanager
+        async def transaction(self):
+            yield self
+
+        async def execute(self, statement):
+            self.calls.append(statement)
+            return NS(mappings=lambda: NS(all=lambda: []))
+
+    database = Database()
+    assert asyncio.run(SessionRepository(database).liveness(owner, identifier)) is None
+    assert len(database.calls) == 1
+    compiled = database.calls[0].compile(dialect=postgresql.dialect())
+    sql = str(compiled).lower()
+    assert "for update" not in sql
+    assert "objective" not in sql and "title" not in sql and "extracted_text" not in sql
+    assert "learning_sessions.owner_id =" in sql
+    assert "learning_sessions.id =" in sql
+    assert "learning_sessions.mode !=" in sql
+    assert "context_documents.owner_id =" in sql
+    assert "context_indexes.owner_id =" in sql
+
+
+def test_active_lookup_does_not_load_a_draft(setup_learning):
+    s = setup_learning
+
+    async def run():
+        active = await started(s)
+        await prepared(s, "context_guided")
+        s.service.read = AsyncMock(
+            side_effect=AssertionError("full preparation must not be loaded")
+        )
+        result = await s.service.active(s.owner)
+        assert result["id"] == active["id"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("code", ["session_expired", "session_revoked"])
+def test_liveness_rejects_expired_auth_before_service(code):
+    app = create_app(Settings(_env_file=None))
+    service = NS(liveness=AsyncMock())
+    app.state.learning_service = service
+
+    def expired():
+        raise PlatformError(code, "Sign in again.", 401)
+
+    app.dependency_overrides[required_current_user] = expired
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        result = client.post(
+            f"/api/v1/learning/sessions/{uuid4()}/validate",
+            json={"revision": 1},
+            headers={"Origin": "http://tauri.localhost"},
+        )
+    assert result.status_code == 401 and result.json()["error"]["code"] == code
+    service.liveness.assert_not_awaited()
+
+
+def test_liveness_success_is_compact_and_correlated():
+    owner, identifier = uuid4(), uuid4()
+    app = create_app(Settings(_env_file=None))
+    app.dependency_overrides[required_current_user] = lambda: NS(id=owner)
+    app.state.learning_service = NS(
+        liveness=AsyncMock(
+            return_value=dict(
+                id=str(identifier),
+                revision=4,
+                status="active",
+                ready=True,
+                mode="general",
+                documents=[],
+                document_ids=[],
+            )
+        )
+    )
+    request_id, trace_id = str(uuid4()), "live-1-abc-1"
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.post(
+            f"/api/v1/learning/sessions/{identifier}/validate",
+            json={"revision": 4},
+            headers={
+                "Origin": "http://tauri.localhost",
+                "X-Request-ID": request_id,
+                "X-Solveguide-Trace-ID": trace_id,
+            },
+        )
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == request_id
+    assert response.headers["x-solveguide-trace-id"] == trace_id
+    assert set(response.json()) == {
+        "id",
+        "revision",
+        "status",
+        "ready",
+        "mode",
+        "documents",
+        "document_ids",
+    }

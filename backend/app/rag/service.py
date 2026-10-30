@@ -4,13 +4,14 @@ from uuid import UUID
 from app.answer.errors import AnswerError
 from app.answer.service import abstain, validate_recommendation
 from app.database import PlatformError
+from app.diagnostics import emit, span
 from app.rag.chunking import chunks, version
 from app.rag.embedding import validate_vectors
 from app.rag.retrieval import Retrieved, Retriever
 from app.rag.schemas import Citation, GroundedAnswer, GroundedDraft
 
 
-def grounded_result(observation, mode, retrieved, draft=None, limitation=None):
+def grounded_result(observation, mode, retrieved, draft=None, limitation=None, reason=None):
     evidence = {e.chunk_id: e for e in retrieved.evidence}
     if (
         limitation
@@ -19,6 +20,21 @@ def grounded_result(observation, mode, retrieved, draft=None, limitation=None):
         or draft.contradictory_evidence
         or draft.recommendation.status in ("insufficient_information", "unsupported")
     ):
+        decision = reason or (
+            "contradictory_evidence"
+            if draft and draft.contradictory_evidence
+            else "provider_insufficient_evidence"
+            if draft
+            else "no_supported_evidence"
+        )
+        emit(
+            "answer_decision",
+            mode=mode,
+            outcome="insufficient_information",
+            reason=decision,
+            evidence_count=len(evidence),
+            method=retrieved.method,
+        )
         answer = abstain(
             observation,
             "insufficient_information",
@@ -68,6 +84,7 @@ def grounded_result(observation, mode, retrieved, draft=None, limitation=None):
                 mode,
                 retrieved,
                 limitation="The materials did not support every part of a reliable answer.",
+                reason="incomplete_citation_support",
             )
     if not refs and mode == "context_guided":
         return grounded_result(
@@ -76,11 +93,21 @@ def grounded_result(observation, mode, retrieved, draft=None, limitation=None):
             retrieved,
             limitation="No document-supported explanation could be validated. "
             "Try General mode explicitly if appropriate.",
+            reason="no_validated_citations",
         )
     citations = [
         Citation(**evidence[key].model_dump(), supports=sorted(targets))
         for key, targets in sorted(refs.items())
     ]
+    emit(
+        "answer_decision",
+        mode=mode,
+        outcome=answer.status,
+        reason="validated_document_support",
+        evidence_count=len(evidence),
+        citation_count=len(citations),
+        method=retrieved.method,
+    )
     return GroundedAnswer(
         **answer.model_dump(),
         reasoning_mode=mode,
@@ -158,6 +185,7 @@ class RagService:
             ) from None
         return {"status": "ready", "unchanged": False}
 
+    @span("grounded_answer")
     async def recommend(self, owner, request, context=None):
         if request.mode == "general":
             return (
@@ -193,6 +221,7 @@ class RagService:
                 request.mode,
                 Retrieved([], "none", {}),
                 limitation="Read a complete, consistent question before using document evidence.",
+                reason="observation_incomplete",
             )
         if not request.allow_context_transmission:
             raise PlatformError(
@@ -209,6 +238,7 @@ class RagService:
                 limitation=retrieved.limitation
                 or "No sufficiently relevant passages were found in the selected materials. "
                 "Add relevant material or use General explicitly.",
+                reason="retrieval_unavailable_or_empty",
             )
         provider = self.answer_service.provider
         try:

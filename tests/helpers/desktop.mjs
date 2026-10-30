@@ -48,6 +48,7 @@ export function desktopFixture(kind = 'workspace') {
     '../vision/controller': { createObservationController: () => stub({ phase: kind === 'empty' ? 'idle' : kind === 'loading' ? 'reading' : 'ready', observation: ['empty', 'loading'].includes(kind) ? null : observation, error: null }) }, '../vision/client': {},
     '../answer/controller': { createAnswerController: () => stub(answerState), connectAnswerLifecycle: noop }, '../answer/client': {},
     '../rag/controller': { createReasoningController: () => stub(reasoningState) }, '../rag/client': {}, '../library/changes': { subscribeLibraryChanges: () => noop },
+    './LiveMonitor': { LiveMonitor: () => null },
     './CaptureDialog': { CaptureDialog: () => null }, './CapturePreview': compile('components/CapturePreview.tsx'),
     './QuestionObservationView': Views, './AnswerRecommendationView': Views, './ReasoningControls': Views,
   })

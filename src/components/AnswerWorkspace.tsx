@@ -1,3 +1,4 @@
+import { LiveMonitor } from './LiveMonitor'
 import { ArrowUpRight, ScanLine } from 'lucide-react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { createCaptureController } from '../capture/controller'
@@ -20,6 +21,7 @@ import { subscribeLibraryChanges } from '../library/changes'
 import type { LearningSession } from '../learning/types'
 
 export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDocument, preparation }: { onCaptureModalChange: (open: boolean) => void; active?: boolean; preparation?: LearningSession; onOpenDocument?: (id: string) => void }) {
+  const [monitorRunning,setMonitorRunning] = useState(false)
   const { controller: auth } = useAuth()
   const [protectedCapture] = useState(() => authenticatedCapture(nativeCapture, authApi, auth.invalidate))
   const [controller] = useState(() => createCaptureController(protectedCapture))
@@ -69,6 +71,10 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
 
   return (
     <>
+      {preparation && <LiveMonitor session={preparation} onOpenDocument={onOpenDocument} onRunningChange={setMonitorRunning}/>}
+      <details className="manual-fallback" open={preparation ? !monitorRunning : true}><summary>Manual capture · Read Question · Suggested Answer</summary>
+      {monitorRunning && <p role="status">Pause Live Monitor before using manual capture or AI requests.</p>}
+      <fieldset className="manual-fields" disabled={monitorRunning}><legend className="sr-only">Manual learning tools</legend>
       <section className="workspace-intro reveal" aria-labelledby="workspace-title">
         <div className="intro-copy">
           <span className="eyebrow"><span className="signal-dot" aria-hidden="true" />LEARNING, IN FOCUS</span>
@@ -123,6 +129,7 @@ export function AnswerWorkspace({ onCaptureModalChange, active = true, onOpenDoc
           <span className="planned-label">Explicit selection · Ephemeral answers</span>
         </aside>
       </div>
+      </fieldset></details>
     </>
   )
 }

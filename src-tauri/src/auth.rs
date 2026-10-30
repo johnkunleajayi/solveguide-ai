@@ -1,3 +1,4 @@
+use crate::diagnostics::{self as diag, Trace};
 use serde::{Deserialize, Serialize};
 use std::{
     sync::{
@@ -6,6 +7,7 @@ use std::{
     },
     time::Duration,
 };
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 const BASE: &str = "http://127.0.0.1:8000/api/v1/auth";
@@ -43,10 +45,19 @@ impl Default for AuthState {
 
 #[derive(Serialize, Debug)]
 pub struct AuthError {
-    code: String,
+    pub(crate) code: String,
     message: &'static str,
 }
 type Result<T> = std::result::Result<T, AuthError>;
+fn legacy_transport_error(mut error: AuthError) -> AuthError {
+    if matches!(
+        error.code.as_str(),
+        "backend_timeout" | "backend_connection_failed" | "backend_invalid_response"
+    ) {
+        error.code = "backend_unavailable".into();
+    }
+    error
+}
 pub(crate) fn error(code: &str) -> AuthError {
     AuthError {
         code: code.into(),
@@ -78,15 +89,27 @@ impl AuthState {
         epoch: u64,
         request: crate::context_library::Request,
     ) -> Result<serde_json::Value> {
-        self.owned_request(epoch, "context/documents", request)
+        self.owned_request(epoch, "context/documents", request, None)
             .await
+            .map_err(legacy_transport_error)
     }
     pub(crate) async fn learning_request(
         &self,
         epoch: u64,
         request: crate::context_library::Request,
     ) -> Result<serde_json::Value> {
-        self.owned_request(epoch, "learning", request).await
+        self.owned_request(epoch, "learning", request, None)
+            .await
+            .map_err(legacy_transport_error)
+    }
+    pub(crate) async fn learning_request_traced(
+        &self,
+        epoch: u64,
+        request: crate::context_library::Request,
+        trace: &Trace,
+    ) -> Result<serde_json::Value> {
+        self.owned_request(epoch, "learning", request, Some(trace))
+            .await
     }
     // Trusted native adapters choose one of two fixed API areas. No frontend URL.
     async fn owned_request(
@@ -94,8 +117,16 @@ impl AuthState {
         epoch: u64,
         area: &str,
         request: crate::context_library::Request,
+        trace: Option<&Trace>,
     ) -> Result<serde_json::Value> {
-        self.library_credential_present(epoch).await?;
+        let fallback = Trace::session(&diag::activation_id(), None);
+        let trace = trace.unwrap_or(&fallback);
+        let path = format!("/api/v1/{area}{}", request.suffix);
+        let mut diagnostic = diag::Http::new(trace.clone(), &path, false);
+        if let Err(error) = self.library_credential_present(epoch).await {
+            diagnostic.finish(None, Some(&error.code));
+            return Err(error);
+        }
         let token = self
             .credentials
             .lock()
@@ -110,12 +141,17 @@ impl AuthState {
                 format!("http://127.0.0.1:8000/api/v1/{area}{}", request.suffix),
             )
             .header("Origin", ORIGIN)
+            .header("X-Request-ID", &trace.request_id)
+            .header("X-Solveguide-Trace-ID", &trace.trace_id)
             .bearer_auth(&token)
             .timeout(Duration::from_secs(if request.suffix.ends_with("/index") {
                 150
             } else {
                 60
             }));
+        if let Some(candidate) = &trace.candidate_id {
+            builder = builder.header("X-Solveguide-Candidate-ID", candidate);
+        }
         if let Some((content_type, filename, bytes)) = request.body {
             builder = builder.header("Content-Type", content_type).body(bytes);
             if let Some(filename) = filename {
@@ -125,10 +161,11 @@ impl AuthState {
         if epoch != self.session_epoch() {
             return Err(error("sign_in_required"));
         }
-        let mut response = builder
-            .send()
-            .await
-            .map_err(|_| error("backend_unavailable"))?;
+        let mut response = builder.send().await.map_err(|e| {
+            let code = diag::http_error(&e);
+            diagnostic.finish(None, Some(code));
+            error(code)
+        })?;
         let status = response.status().as_u16();
         if status == 401 {
             let mut credentials = self.credentials.lock().await;
@@ -137,12 +174,13 @@ impl AuthState {
             }
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| error("backend_unavailable"))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(|e| {
+            let code = diag::http_error(&e);
+            diagnostic.finish(Some(status), Some(code));
+            error(code)
+        })? {
             if bytes.len() + chunk.len() > 8 * 1024 * 1024 {
+                diagnostic.finish(Some(status), Some("backend_response_too_large"));
                 return Err(error("invalid_response"));
             }
             bytes.extend_from_slice(&chunk);
@@ -153,11 +191,18 @@ impl AuthState {
         let raw: serde_json::Value = if status == 204 {
             serde_json::Value::Null
         } else {
-            serde_json::from_slice(&bytes).map_err(|_| error("invalid_response"))?
+            serde_json::from_slice(&bytes).map_err(|_| {
+                diagnostic.finish(Some(status), Some("backend_invalid_response"));
+                error("invalid_response")
+            })?
         };
+        let code = raw["error"]["code"]
+            .as_str()
+            .unwrap_or("backend_http_error");
+        diagnostic.finish(Some(status), if status >= 400 { Some(code) } else { None });
         if status >= 400 {
             return Ok(
-                serde_json::json!({"ok":false,"status":status,"error":{"code":if status == 401 { "sign_in_required" } else {raw["error"]["code"].as_str().unwrap_or("library_unavailable")}}}),
+                serde_json::json!({"ok":false,"status":status,"error":{"code":raw["error"]["code"].as_str().unwrap_or(if status==401{"sign_in_required"}else{"library_unavailable"})}}),
             );
         }
         Ok(serde_json::json!({"ok":true,"status":status,"data":raw}))
@@ -385,10 +430,19 @@ pub async fn auth_cancel(
 
 #[tauri::command]
 pub async fn auth_logout(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     state: tauri::State<'_, AuthState>,
 ) -> Result<()> {
     authorize(&window)?;
+    app.state::<crate::monitor::MonitorState>()
+        .log_action("stop", "logout");
+    app.state::<crate::monitor::MonitorState>().stop(
+        &app,
+        false,
+        "stopped",
+        "Signed out. Monitoring stopped.",
+    );
     state.epoch.fetch_add(1, Ordering::SeqCst);
     cancel_ai(&state, None);
     let mut credentials = state.credentials.lock().await;
@@ -411,7 +465,7 @@ pub async fn auth_logout(
     Ok(())
 }
 
-fn cancel_ai(state: &AuthState, request_id: Option<&str>) {
+pub(crate) fn cancel_ai(state: &AuthState, request_id: Option<&str>) {
     let pending = state.pending_ai.lock().unwrap_or_else(|p| p.into_inner());
     if let Some((id, sender)) = pending.as_ref() {
         if request_id.is_none_or(|requested| requested == id) {
@@ -499,18 +553,34 @@ pub async fn ai_request(
     authorize(&window)?;
     request_authenticated(&state, kind, request_id, payload).await
 }
-async fn request_authenticated(
+pub(crate) async fn request_authenticated(
     state: &AuthState,
     kind: AiKind,
     request_id: String,
     payload: serde_json::Value,
 ) -> Result<serde_json::Value> {
-    validate_ai(kind, &request_id, &payload)?;
+    let trace = Trace::local(&request_id);
+    request_authenticated_traced(state, kind, request_id, payload, &trace)
+        .await
+        .map_err(legacy_transport_error)
+}
+pub(crate) async fn request_authenticated_traced(
+    state: &AuthState,
+    kind: AiKind,
+    request_id: String,
+    payload: serde_json::Value,
+    trace: &Trace,
+) -> Result<serde_json::Value> {
+    let mut diagnostic = diag::Http::new(trace.clone(), kind.path(), true);
+    validate_ai(kind, &request_id, &payload).inspect_err(|error| {
+        diagnostic.finish(None, Some(&error.code));
+    })?;
     let epoch = state.epoch.load(Ordering::SeqCst);
     let (sender, mut cancelled) = tokio::sync::watch::channel(false);
     {
         let mut pending = state.pending_ai.lock().unwrap_or_else(|p| p.into_inner());
         if pending.is_some() {
+            diagnostic.finish(None, Some("ai_busy"));
             return Err(error("ai_busy"));
         }
         *pending = Some((request_id.clone(), sender));
@@ -522,6 +592,7 @@ async fn request_authenticated(
     if epoch != state.epoch.load(Ordering::SeqCst) {
         return Err(error("sign_in_required"));
     }
+    let mut response_status = None;
     let operation = async {
         let token = state
             .credentials
@@ -533,21 +604,28 @@ async fn request_authenticated(
         if epoch != state.epoch.load(Ordering::SeqCst) {
             return Err(error("sign_in_required"));
         }
-        let response = state
+        let mut builder = state
             .client
             .post(format!("http://127.0.0.1:8000{}", kind.path()))
             .header("Origin", ORIGIN)
+            .header("X-Request-ID", &trace.request_id)
+            .header("X-Solveguide-Trace-ID", &trace.trace_id)
             .bearer_auth(&token)
             .timeout(Duration::from_secs(105))
-            .json(&payload)
+            .json(&payload);
+        if let Some(candidate) = &trace.candidate_id {
+            builder = builder.header("X-Solveguide-Candidate-ID", candidate);
+        }
+        let response = builder
             .send()
             .await
-            .map_err(|_| error("backend_unavailable"))?;
+            .map_err(|e| error(diag::http_error(&e)))?;
         let status = response.status();
+        response_status = Some(status.as_u16());
         let raw: serde_json::Value = response
             .json()
             .await
-            .map_err(|_| error("backend_unavailable"))?;
+            .map_err(|e| error(diag::http_error(&e)))?;
         if status.as_u16() == 401 {
             let mut credentials = state.credentials.lock().await;
             if credentials.token.as_deref() == Some(&token) {
@@ -568,7 +646,23 @@ async fn request_authenticated(
         result = operation => result,
     };
     if epoch != state.epoch.load(Ordering::SeqCst) {
+        diagnostic.finish(None, Some("sign_in_required"));
         return Err(error("sign_in_required"));
+    }
+    match &result {
+        Ok(response) => diagnostic.finish(
+            response["status"].as_u64().map(|v| v as u16),
+            if response["ok"] == true {
+                None
+            } else {
+                Some(
+                    response["error"]["code"]
+                        .as_str()
+                        .unwrap_or("backend_http_error"),
+                )
+            },
+        ),
+        Err(e) => diagnostic.finish(response_status, Some(&e.code)),
     }
     result
 }

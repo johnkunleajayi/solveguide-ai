@@ -180,7 +180,7 @@ impl PrivacyState {
             eprintln!("screen_share_privacy: preference_storage_unavailable");
         }
     }
-    fn update(
+    pub(crate) fn update(
         &self,
         window: &tauri::WebviewWindow,
         preference: Option<bool>,
@@ -234,7 +234,7 @@ pub fn privacy_get_state(
     state: tauri::State<'_, PrivacyState>,
 ) -> Result<PrivacyStatus, &'static str> {
     authorize(&window)?;
-    Ok(state.update(&window, None, false))
+    Ok(all_windows(&window, &state, None))
 }
 #[tauri::command]
 pub fn privacy_set_enabled(
@@ -243,7 +243,7 @@ pub fn privacy_set_enabled(
     enabled: bool,
 ) -> Result<PrivacyStatus, &'static str> {
     authorize(&window)?;
-    Ok(state.update(&window, Some(enabled), true))
+    Ok(all_windows(&window, &state, Some(enabled)))
 }
 
 #[cfg(test)]
@@ -362,4 +362,31 @@ mod tests {
         fs::remove_file(path).unwrap();
         fs::remove_dir(root).unwrap();
     }
+}
+
+// Apply/verify the existing preference across our two owned top-level windows.
+fn all_windows(
+    window: &tauri::WebviewWindow,
+    state: &PrivacyState,
+    preference: Option<bool>,
+) -> PrivacyStatus {
+    use tauri::Manager;
+    let mut status = state.update(window, preference, preference.is_some());
+    if let Some(panel) = window.app_handle().get_webview_window("answer-panel") {
+        let other = state.update(&panel, None, preference.is_some());
+        if other.effective_state != status.effective_state || other.issue.is_some() {
+            status.effective_state = EffectiveState::Failed;
+            status.issue = other.issue.or(Some(Issue::VerificationFailed));
+        }
+    }
+    if let Some(monitor) = window
+        .app_handle()
+        .try_state::<crate::monitor::MonitorState>()
+    {
+        monitor.set_privacy_available(matches!(
+            status.effective_state,
+            EffectiveState::Enabled | EffectiveState::Disabled
+        ));
+    }
+    status
 }

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=BACKEND_ROOT / ".env", env_file_encoding="utf-8", extra="ignore"
     )
+    solveguide_log_level: Literal["INFO", "DEBUG"] = "INFO"
     openai_api_key: SecretStr | None = None
     openai_vision_model: str = Field(default="gpt-4.1-mini", min_length=1, max_length=100)
     vision_timeout_seconds: float = Field(default=45, ge=1, le=90)

@@ -3,6 +3,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from app.diagnostics import emit, span
 from app.rag.schemas import Evidence
 
 STOP = set(
@@ -65,6 +66,7 @@ class Retriever:
     def __init__(self, repository, embedding, settings):
         self.repository, self.embedding, self.settings = repository, embedding, settings
 
+    @span("retrieval")
     async def retrieve(self, owner, identifiers, observation):
         documents, indexes = await self.repository.selection(owner, identifiers)
         snapshots = {i.document_id: i.generation for i in indexes}
@@ -73,6 +75,12 @@ class Retriever:
             or any(i.status != "ready" for i in indexes)
             or any(d.extraction_status != "ready" for d in documents)
         ):
+            emit(
+                "retrieval_decision",
+                outcome="unavailable",
+                reason="index_or_extraction_not_ready",
+                selected_count=len(identifiers),
+            )
             return Retrieved(
                 [],
                 "none",
@@ -89,6 +97,12 @@ class Retriever:
             or i.dimensions != self.settings.embedding_dimensions
             for i in indexes
         ):
+            emit(
+                "retrieval_decision",
+                outcome="unavailable",
+                reason="embedding_configuration_changed",
+                selected_count=len(identifiers),
+            )
             return Retrieved(
                 [],
                 "none",
@@ -106,8 +120,23 @@ class Retriever:
         method = "semantic_pgvector" if semantic else "lexical"
         terms = query if semantic else lexical_query(query)
         if not terms:
+            emit(
+                "retrieval_decision",
+                outcome="empty",
+                reason="no_searchable_terms",
+                selected_count=len(identifiers),
+            )
             return Retrieved([], "none", snapshots, "No searchable question terms were available.")
         await self.repository.validate(owner, snapshots)
         rows = await self.repository.rank(owner, identifiers, method, terms, vector)
         await self.repository.validate(owner, snapshots)
-        return Retrieved(bounded_evidence(rows, self.settings, method), method, snapshots)
+        evidence = bounded_evidence(rows, self.settings, method)
+        emit(
+            "retrieval_decision",
+            outcome="retrieved" if evidence else "empty",
+            reason="relevant_passages" if evidence else "no_relevant_passages",
+            method=method,
+            selected_count=len(identifiers),
+            evidence_count=len(evidence),
+        )
+        return Retrieved(evidence, method, snapshots)

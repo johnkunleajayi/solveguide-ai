@@ -1163,3 +1163,28 @@ questions, answers and provider payloads remain ephemeral. Explicit recommendati
 send learning intent to the provider; grounded requests preserve separate passage
 consent and selected-document ownership. There is no automatic capture or Live Monitor.
 No new environment variables or dependencies are needed.
+
+
+## Milestone 13 — Live Question Monitor
+
+A ready authenticated learning session can explicitly monitor one selected Windows
+window/monitor, locally filter stable page changes, automatically read a clear question
+and request a session-authoritative recommendation in a separate answer panel. Manual
+capture remains available after pausing. Monitoring never starts on launch or recovery.
+
+See [Live Monitor architecture, costs, limitations and manual tests](docs/LIVE_MONITOR.md).
+Native run/generation cancellation protects against stale results; existing RAG/consent,
+native credentials and screen-share privacy apply. All monitoring content stays ephemeral.
+No database migration or new provider is required. Automatic calls may incur charges;
+review the activation notice and bounded candidate budget. Non-focus-stealing behavior
+is implemented using documented Windows showing flags but requires native manual testing.
+
+
+### Monitor diagnostic logging
+
+Application diagnostics default to INFO. Set `SOLVEGUIDE_LOG_LEVEL=DEBUG` in both
+backend and desktop PowerShell terminals before restarting. See
+[diagnostic setup, event reference and incident tracing](docs/DIAGNOSTICS.md). Logs
+contain validated correlation IDs and safe classifications, never learning content
+or credentials. Native session validation uses a bounded 12-second deadline, a compact owned readiness
+projection, and overlap-only request coalescing; see the diagnostic guide for details.

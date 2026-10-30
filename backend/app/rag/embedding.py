@@ -13,6 +13,7 @@ from openai import (
 )
 
 from app.database import PlatformError
+from app.diagnostics import span
 
 
 class EmbeddingProvider(Protocol):
@@ -36,6 +37,7 @@ class OpenAIEmbeddingProvider:
     def __init__(self, settings):
         self.settings = settings
 
+    @span("embedding_provider")
     async def embed(self, texts):
         s = self.settings
         if not s.provider_configured:

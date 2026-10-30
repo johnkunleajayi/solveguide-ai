@@ -6,7 +6,29 @@ Work ONLY inside `D:\solveguide-ai`. No project files, Python/Rust environments,
 caches, screenshots, WebView profiles or build/temp artifacts on C:, Desktop,
 OneDrive or elsewhere. Never commit or push without explicit authorization.
 
-## Current scope: Milestone 12 Session Preparation
+## Current scope: Milestone 13 Live Question Monitor
+
+Follow `docs/LIVE_MONITOR.md`. Native `monitor/` owns bounded sampling, local filtering,
+explicit lifecycle, run/generation cancellation and the owned answer panel. Monitoring
+requires explicit source selection, cost/transmission consent and a ready owned session.
+Never auto-start on login/recovery. Reuse authenticated Vision/Answer endpoints; session
+configuration remains server-authoritative. No screenshots/questions/answers/history
+persist. No migration, website changes, evasion/hooks, new providers or publication.
+Preserve native privacy on both windows; never disable it for screenshots. Automatic
+updates must not restore/focus the main window. Report focus/hardware/provider results
+only when actually manually tested. Existing manual workflow remains the paused fallback.
+
+## Diagnostic logging invariants
+
+Follow `docs/DIAGNOSTICS.md`. SOLVEGUIDE_LOG_LEVEL defaults INFO; DEBUG enables only
+allowlisted application events. Preserve trace/request/candidate correlation and
+ContextVar isolation. Never emit raw exceptions, payloads, headers, query strings,
+learning/document content, OAuth values or credentials. Healthy heartbeat details
+are DEBUG-only. Preserve the bounded 12-second native session-validation policy and overlap-only
+coalescing documented in docs/DIAGNOSTICS.md. Do not add cached authorization,
+silent retries, or changes to provider behavior, authentication or persistence.
+
+## Session Preparation invariants
 
 Follow `docs/SESSION_PREPARATION.md`. `app/learning` owns preparation metadata and
 lifecycle; `src/learning` / LearningWorkspace own typed desktop recovery and steps.
@@ -16,8 +38,8 @@ Preserve revision/confirmation checks, readiness/consent validation and late-res
 rejection. Active answer requests contain observation plus session ID/revision only;
 backend configuration is authoritative. Legacy envelopes cannot bypass an active
 session. General never retrieves documents. Purpose/objective are untrusted learning
-intent. Never persist captures/questions/answers/provider payloads. No Live Monitor,
-automatic capture/provider calls or history. Do not apply `0004_session_preparation`
+intent. Never persist captures/questions/answers/provider payloads or history. Automatic
+capture/provider calls are permitted only inside explicitly activated Milestone 13 monitoring. Do not apply `0004_session_preparation`
 to live Neon without explicit approval; offline DDL and isolated tests only by default.
 Existing privacy, native credentials, cancellation, RAG, brand and website boundaries
 remain mandatory. No commit/push/deploy.
@@ -47,8 +69,9 @@ use synthetic offline states; they are not proof of live/native workflows.
 All completed milestone invariants below remain mandatory.
 
 SolveGuide CAPTURES, UNDERSTANDS, RECOMMENDS and EXPLAINS for learning and authorized
-practice. Preserve working native capture and separate vision extraction. Answers
-require an explicit Get Suggested Answer action on a validated QuestionObservation;
+practice. Preserve working native capture and separate vision extraction. Manual answers
+require an explicit Get Suggested Answer action on a validated QuestionObservation; explicitly
+activated Live Monitor may orchestrate the same validated pipeline automatically;
 never combine capture/vision/recommendation into an uncontrolled paid prompt.
 Google OIDC and PostgreSQL/SQLAlchemy/Alembic now wrap the stable AI pipeline.
 SolveGuide is desktop-only; Google authentication is mandatory for all core learning

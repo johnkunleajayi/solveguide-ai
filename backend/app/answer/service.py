@@ -2,10 +2,23 @@ from app.answer.context import LearningContext
 from app.answer.errors import AnswerError
 from app.answer.provider import AnswerProvider
 from app.answer.schemas import AnswerRecommendation
+from app.diagnostics import emit, span
 from app.schemas import QuestionObservation
 
 
-def abstain(observation: QuestionObservation, status: str, message: str) -> AnswerRecommendation:
+def abstain(
+    observation: QuestionObservation, status: str, message: str, reason: str | None = None
+) -> AnswerRecommendation:
+    if reason:
+        emit(
+            "answer_decision",
+            outcome=status,
+            reason=reason,
+            mode="general",
+            question_type=observation.question_type,
+            option_count=len(observation.options),
+            visual_count=len(observation.visual_elements),
+        )
     return AnswerRecommendation.model_validate(
         {
             "status": status,
@@ -85,6 +98,7 @@ class AnswerService:
     def __init__(self, provider: AnswerProvider):
         self.provider = provider
 
+    @span("answer_service")
     async def recommend(
         self, observation: QuestionObservation, context: LearningContext | None = None
     ) -> AnswerRecommendation:
@@ -97,6 +111,7 @@ class AnswerService:
                 observation,
                 "insufficient_information",
                 "Read a complete, clear question first. Retake unclear content.",
+                reason="observation_incomplete",
             )
         if observation.question_type in (
             "multiple_choice",
@@ -106,12 +121,14 @@ class AnswerService:
                 observation,
                 "insufficient_information",
                 "The question type conflicts with its selection instructions. Retake or review it.",
+                reason="selection_instruction_conflict",
             )
         if observation.question_type == "unknown":
             return abstain(
                 observation,
                 "unsupported",
                 "The question type is unknown. Retake or clarify the visible question.",
+                reason="unknown_question_type",
             )
         if observation.question_type in ("multiple_choice", "multiple_select") and (
             not observation.options
@@ -124,6 +141,7 @@ class AnswerService:
                 observation,
                 "insufficient_information",
                 "There are not enough visible options to recommend an answer.",
+                reason="missing_options",
             )
         try:
             result = (
@@ -132,7 +150,18 @@ class AnswerService:
                 else await self.provider.recommend(observation)
             )
             result = AnswerRecommendation.model_validate(result.model_dump())
-            return validate_recommendation(observation, result)
+            result = validate_recommendation(observation, result)
+            emit(
+                "answer_decision",
+                outcome=result.status,
+                mode="general",
+                reason="provider_abstention"
+                if result.status in ("insufficient_information", "unsupported")
+                else "provider_recommendation",
+                warning_count=len(result.warnings),
+                option_count=len(result.selected_options),
+            )
+            return result
         except AnswerError:
             raise
         except Exception:

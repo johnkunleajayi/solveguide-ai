@@ -27,11 +27,7 @@ use ::windows::{
         },
     },
 };
-use base64::Engine;
-use std::{
-    sync::mpsc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{sync::mpsc, time::Duration};
 fn native_error(_: ::windows::core::Error) -> CaptureError {
     error("capture_failed", "Windows could not capture this source. It may be protected, unavailable, or unsupported by the display driver.")
 }
@@ -182,7 +178,106 @@ impl Drop for Session {
     }
 }
 
-pub fn capture(mut source: Source) -> Result<CaptureResult> {
+fn create_item(source: &Source) -> Result<GraphicsCaptureItem> {
+    let interop: IGraphicsCaptureItemInterop =
+        factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(native_error)?;
+    let item: GraphicsCaptureItem = unsafe {
+        match source.kind {
+            SourceKind::Screen => interop.CreateForMonitor(HMONITOR(source.native_id as _)),
+            SourceKind::Window => interop.CreateForWindow(HWND(source.native_id as _)),
+            SourceKind::Region => {
+                return Err(error(
+                    "unsupported_source",
+                    "Region selection is not available yet.",
+                ))
+            }
+        }
+    }
+    .map_err(native_error)?;
+
+    Ok(item)
+}
+
+// A retained item pins the selected source identity. Recreating sessions must not
+// reinterpret a reused HWND as another window. AgileReference resolves safely on
+// each MTA sampling thread; the Closed handler owns no item reference or pixels.
+pub(super) struct Target {
+    item: Option<::windows::core::AgileReference<GraphicsCaptureItem>>,
+    closed: std::sync::Arc<AtomicBool>,
+}
+impl Target {
+    pub(super) fn new(source: &Source) -> Result<Self> {
+        let _dpi = Dpi::enter();
+        if !discover()?.iter().any(|s| {
+            s.kind == source.kind
+                && s.native_id == source.native_id
+                && s.process_id == source.process_id
+                && s.title == source.title
+        }) {
+            return Err(unavailable());
+        }
+        unsafe {
+            RoInitialize(RO_INIT_MULTITHREADED).map_err(native_error)?;
+        }
+        let _apartment = Apartment;
+        let item = create_item(source)?;
+        let closed = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = closed.clone();
+        let _registration = item
+            .Closed(&TypedEventHandler::<
+                GraphicsCaptureItem,
+                ::windows::core::IInspectable,
+            >::new(move |_, _| {
+                flag.store(true, Ordering::Release);
+                Ok(())
+            }))
+            .map_err(native_error)?;
+        Ok(Self {
+            item: Some(::windows::core::AgileReference::new(&item).map_err(native_error)?),
+            closed,
+        })
+    }
+    pub(super) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+    fn resolve(&self) -> Result<GraphicsCaptureItem> {
+        if self.is_closed() {
+            return Err(unavailable());
+        }
+        self.item
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .resolve()
+            .map_err(native_error)
+    }
+}
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    #[test]
+    fn closed_source_can_never_be_reinterpreted_as_a_reused_handle() {
+        let target = Target {
+            item: None,
+            closed: std::sync::Arc::new(AtomicBool::new(true)),
+        };
+        assert!(target.is_closed());
+        assert!(target.resolve().is_err());
+    }
+}
+pub fn capture(source: Source) -> Result<CaptureResult> {
+    capture_frame(source, None, None)?.encode()
+}
+
+pub(super) fn capture_frame(
+    mut source: Source,
+    cancelled: Option<&AtomicBool>,
+    target: Option<&Target>,
+) -> Result<Frame> {
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire))
+        || target.is_some_and(Target::is_closed)
+    {
+        return Err(unavailable());
+    }
     let _dpi = Dpi::enter();
     // Re-discover immediately; stale tokens never select a replacement window or monitor.
     let live = discover()?
@@ -191,7 +286,7 @@ pub fn capture(mut source: Source) -> Result<CaptureResult> {
             s.kind == source.kind
                 && s.native_id == source.native_id
                 && s.process_id == source.process_id
-                && s.title == source.title
+                && (cancelled.is_some() || s.title == source.title)
         })
         .ok_or_else(unavailable)?;
     if source.kind == SourceKind::Screen
@@ -212,21 +307,11 @@ pub fn capture(mut source: Source) -> Result<CaptureResult> {
     if !GraphicsCaptureSession::IsSupported().map_err(native_error)? {
         return Err(error("unsupported_platform", "Windows Graphics Capture requires a supported Windows 10 version 1903 or newer display."));
     }
-    let interop: IGraphicsCaptureItemInterop =
-        factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(native_error)?;
-    let item: GraphicsCaptureItem = unsafe {
-        match source.kind {
-            SourceKind::Screen => interop.CreateForMonitor(HMONITOR(source.native_id as _)),
-            SourceKind::Window => interop.CreateForWindow(HWND(source.native_id as _)),
-            SourceKind::Region => {
-                return Err(error(
-                    "unsupported_source",
-                    "Region selection is not available yet.",
-                ))
-            }
-        }
-    }
-    .map_err(native_error)?;
+    let item = if let Some(target) = target {
+        target.resolve()?
+    } else {
+        create_item(&source)?
+    };
     let size = item.Size().map_err(native_error)?;
     validate_size(size.Width.max(0) as u32, size.Height.max(0) as u32)?;
     let (mut device, mut context) = (None, None);
@@ -275,13 +360,31 @@ pub fn capture(mut source: Source) -> Result<CaptureResult> {
             },
         ))
         .map_err(native_error)?;
+    if cancelled.is_some() {
+        let _ = guard.session.SetIsCursorCaptureEnabled(false);
+    }
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire))
+        || target.is_some_and(Target::is_closed)
+    {
+        return Err(unavailable());
+    }
     guard.session.StartCapture().map_err(native_error)?;
-    let frame = rx.recv_timeout(Duration::from_secs(5)).map_err(|_| {
-        error(
-            "capture_timeout",
-            "The source did not provide a frame. Restore the window or choose another source.",
-        )
-    })?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let frame = loop {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err(error("capture_cancelled", "Monitoring stopped."));
+        }
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(frame) => break frame,
+            Err(mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < deadline => {}
+            _ => {
+                return Err(error(
+                    "capture_timeout",
+                    "The source is unavailable. Restore it and choose Resume.",
+                ))
+            }
+        }
+    };
     let frame_size = frame.ContentSize().map_err(native_error)?;
     if frame_size.Width != size.Width || frame_size.Height != size.Height {
         return Err(error(
@@ -349,34 +452,11 @@ pub fn capture(mut source: Source) -> Result<CaptureResult> {
     }
     frame.Close().map_err(native_error)?;
     drop(guard); // End native capture before encoding; no recording loop survives this call.
-    let mut png_bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut png_bytes, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().map_err(|_| {
-            error(
-                "encoding_failed",
-                "The captured image could not be prepared.",
-            )
-        })?;
-        writer.write_image_data(&pixels).map_err(|_| {
-            error(
-                "encoding_failed",
-                "The captured image could not be prepared.",
-            )
-        })?;
-    }
-    Ok(CaptureResult {
+    Ok(Frame {
         source,
         width,
         height,
-        format: "image/png",
-        captured_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
-        image_base64: base64::engine::general_purpose::STANDARD.encode(png_bytes),
+        pixels,
     })
 }
 

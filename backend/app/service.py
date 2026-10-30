@@ -1,5 +1,6 @@
 from pydantic import ValidationError
 
+from app.diagnostics import span
 from app.errors import VisionError
 from app.images import ValidatedImage
 from app.providers.base import VisionProvider
@@ -10,6 +11,7 @@ class VisionService:
     def __init__(self, provider: VisionProvider):
         self.provider = provider
 
+    @span("vision_service")
     async def observe(self, image: ValidatedImage) -> QuestionObservation:
         try:
             observation = await self.provider.observe(image)
