@@ -9,7 +9,7 @@ use crate::{
     context_library::Request,
     diagnostics::{self as diag, Trace},
 };
-use filter::{Gate, Signature};
+use filter::{CompletedFrame, FrameIdentity, Gate, Signature};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{
@@ -736,6 +736,7 @@ fn fingerprint(observation: &Value) -> String {
         "required_selection_count",
         "visible_context",
         "visual_elements",
+        "visual_task",
     ];
     let data: serde_json::Map<String, Value> = fields
         .into_iter()
@@ -760,7 +761,11 @@ fn fingerprint(observation: &Value) -> String {
             other => other,
         }
     }
-    normalize(Value::Object(data), observation["question_type"] == "code").to_string()
+    normalize(
+        Value::Object(data),
+        observation["question_type"] == "code" || observation["visual_task"].is_object(),
+    )
+    .to_string()
 }
 use pipeline::{Outcome, Services};
 struct NativeServices {
@@ -933,10 +938,13 @@ async fn run_loop(
         trace: Trace::session(&selection.trace_id, None),
     };
     let mut gate = Gate::new();
+    let mut completed_frame = CompletedFrame::default();
+    let mut pending_frame = None;
     let started = Instant::now();
     let mut next_request = 0;
     let mut attempts = 0;
     let mut failures = 0;
+    let mut retry_pending = false;
     let mut last = None;
     let mut generation = 0;
     let mut next_session_check = 5000; // Startup just validated; do not immediately repeat.
@@ -1023,6 +1031,7 @@ async fn run_loop(
         let (changed, stable) =
             gate.observe(Signature::of(&frame), now, selection.config.stabilize_ms);
         if changed {
+            retry_pending = false;
             generation += 1;
             diag::emit(
                 "monitor_candidate_changed",
@@ -1036,6 +1045,7 @@ async fn run_loop(
             if let Some(old) = worker.take() {
                 old.abort();
                 let _ = old.await;
+                pending_frame = None;
             }
             if !state.change(run, |s| {
                 s.generation = (run << 32) + generation;
@@ -1048,9 +1058,13 @@ async fn run_loop(
             }
         }
         if worker.as_ref().is_some_and(|w| w.inner().is_finished()) {
+            let finished_frame = pending_frame.take();
             let result = worker.take().expect("finished worker").await;
             match result {
                 Ok(Ok(outcome)) => {
+                    if let Some(identity) = finished_frame {
+                        completed_frame.finish(identity);
+                    }
                     failures = 0;
                     diag::emit(
                         "monitor_candidate_finished",
@@ -1105,6 +1119,7 @@ async fn run_loop(
                     }
                     next_request = next_request.max(now + backoff(failures - 1) * 1000);
                     gate.retry();
+                    retry_pending = true;
                     state.change(run,|s|{s.phase="monitoring".into();s.message="Provider unavailable. Backing off before a bounded retry. Pause or Stop at any time.".into();s.observation=None;s.answer=None;});
                 }
                 Err(_) => {
@@ -1129,6 +1144,26 @@ async fn run_loop(
             }
         }
         if stable && worker.is_none() && now >= next_request {
+            let identity = FrameIdentity::of(&frame);
+            if completed_frame.contains(identity) {
+                gate.sent();
+                diag::emit(
+                    "monitor_frame_suppressed",
+                    "DEBUG",
+                    Some(&Trace::session(
+                        &selection.trace_id,
+                        Some((run, generation)),
+                    )),
+                    json!({"run":run,"generation":generation,"reason":"same_completed_pixels"}),
+                );
+                state.change(run, |s| {
+                    s.phase = "monitoring".into();
+                    s.message =
+                        "Unchanged source pixels already processed. No additional AI request sent."
+                            .into();
+                });
+                continue;
+            }
             if attempts >= selection.config.max_questions {
                 state.stop_run(
                     &app,
@@ -1147,9 +1182,11 @@ async fn run_loop(
                     &selection.trace_id,
                     Some((run, generation)),
                 )),
-                json!({"run":run,"generation":generation,"attempt":attempts}),
+                json!({"run":run,"generation":generation,"attempt":attempts,"reason":if retry_pending {"candidate_retry"} else {"stable_source_candidate"}}),
             );
+            retry_pending = false;
             gate.sent();
+            pending_frame = Some(identity);
             next_request = now + selection.config.request_interval_seconds * 1000;
             state.change(run, |s| {
                 s.phase = "processing".into();

@@ -3,6 +3,7 @@ from uuid import UUID
 
 from app.answer.errors import AnswerError
 from app.answer.service import abstain, validate_recommendation
+from app.answer.visual import visual_limitation
 from app.database import PlatformError
 from app.diagnostics import emit, span
 from app.rag.chunking import chunks, version
@@ -267,6 +268,11 @@ class RagService:
         # Ownership before consent/provider execution; never broaden selection on failure.
         await self.repository.selection(owner, ids)
         observation = request.observation
+        limitation = visual_limitation(observation)
+        if limitation:
+            return grounded_result(
+                observation, request.mode, Retrieved([], "none", {}), limitation=limitation
+            )
         invalid = (
             observation.status != "detected"
             or not observation.question_text

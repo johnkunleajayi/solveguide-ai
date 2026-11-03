@@ -44,6 +44,7 @@ def observation_data():
         "required_selection_count": 1,
         "visible_context": [],
         "visual_elements": [],
+        "visual_task": None,
         "extraction_confidence": 0.94,
         "warnings": [],
     }

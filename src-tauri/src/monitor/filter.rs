@@ -1,5 +1,32 @@
 //! Local, bounded luminance comparison. It never calls a provider.
 use crate::capture::Frame;
+use std::hash::{DefaultHasher, Hash, Hasher};
+
+/// Ephemeral exact-pixel fingerprint, not an authorization or security identifier.
+/// Two domain-separated hashes avoid keeping another full-size screenshot buffer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FrameIdentity(u32, u32, u64, u64);
+impl FrameIdentity {
+    pub fn of(frame: &Frame) -> Self {
+        let digest = |domain: u8| {
+            let mut hasher = DefaultHasher::new();
+            domain.hash(&mut hasher);
+            frame.pixels.hash(&mut hasher);
+            hasher.finish()
+        };
+        Self(frame.width, frame.height, digest(0), digest(1))
+    }
+}
+#[derive(Default)]
+pub struct CompletedFrame(Option<FrameIdentity>);
+impl CompletedFrame {
+    pub fn contains(&self, frame: FrameIdentity) -> bool {
+        self.0 == Some(frame)
+    }
+    pub fn finish(&mut self, frame: FrameIdentity) {
+        self.0 = Some(frame);
+    }
+}
 #[derive(Clone)]
 pub struct Signature {
     pub width: u32,
@@ -83,6 +110,47 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn frame(value: u8) -> Frame {
+        Frame {
+            source: crate::capture::Source {
+                id: "synthetic".into(),
+                kind: crate::capture::SourceKind::Window,
+                title: "Synthetic".into(),
+                width: 128,
+                height: 72,
+                x: 0,
+                y: 0,
+                primary: false,
+                native_id: 0,
+                process_id: 0,
+            },
+            width: 128,
+            height: 72,
+            pixels: vec![value; 128 * 72 * 4],
+        }
+    }
+    #[test]
+    fn completed_pixels_suppress_repeat_after_unprocessed_noise_but_not_new_questions() {
+        let a = FrameIdentity::of(&frame(20));
+        let b = FrameIdentity::of(&frame(40));
+        let mut completed = CompletedFrame::default();
+        assert!(!completed.contains(a)); // Activation has no history.
+        completed.finish(a);
+        for _ in 0..10 {
+            assert!(completed.contains(FrameIdentity::of(&frame(20))));
+        }
+        assert!(!completed.contains(b)); // New page, or a retry after failure, remains eligible.
+        assert!(completed.contains(a)); // Aborted/unprocessed noise B did not retire A.
+        completed.finish(b);
+        assert!(!completed.contains(a)); // A -> completed B -> A is a legitimate transition.
+        assert!(completed.contains(b));
+        assert!(!CompletedFrame::default().contains(b)); // Stop/new session/source has no cache.
+        let mut tiny = frame(40);
+        tiny.pixels[1] += 1;
+        assert_ne!(b, FrameIdentity::of(&tiny)); // Full pixels, not the sparse gate signature.
+        tiny.width += 1;
+        assert_ne!(b, FrameIdentity::of(&tiny));
+    }
     fn s(n: usize) -> Signature {
         let mut cells = vec![0; 9216];
         cells[..n].fill(255);

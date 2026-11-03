@@ -27,6 +27,10 @@ pub(super) async fn execute(
             .is_none_or(|s| s.trim().is_empty())
         || observation["extraction_confidence"].as_f64().unwrap_or(0.0) < 0.65
         || observation["question_type"] == "unknown"
+        || observation["visual_task"]["complete"] == false
+        || ((observation["visual_task"]["kind"] == "editing_prompt"
+            || observation["visual_task"]["requested_output"] == "editing_prompt")
+            && observation["visual_task"]["direction"] != "established")
     {
         return Ok(Outcome {
             observation,
@@ -102,6 +106,36 @@ mod tests {
                 Ok(json!({"status":"answered"}))
             }
         }
+    }
+    #[test]
+    fn visual_tasks_preserve_detail_identity_and_use_the_same_authorized_pipeline() {
+        tauri::async_runtime::block_on(async {
+            let mut f = Fake::new();
+            f.observation["question_type"] = json!("visual_reasoning");
+            f.observation["visual_task"] = json!({"kind":"editing_prompt","complete":true,"direction":"established","observed_changes":["title becomes mint"]});
+            let before = fingerprint(&f.observation);
+            f.observation["visual_task"]["observed_changes"] = json!(["title moves right"]);
+            assert_ne!(before, fingerprint(&f.observation));
+            let single_space = fingerprint(&f.observation);
+            f.observation["visual_task"]["observed_changes"] = json!(["title  moves right"]);
+            assert_ne!(single_space, fingerprint(&f.observation));
+            assert!(execute(&f, json!({}), Some(before))
+                .await
+                .unwrap()
+                .answer
+                .is_some());
+            assert_eq!(
+                *f.events.lock().unwrap(),
+                vec!["session", "vision", "session", "answer", "session"]
+            );
+            for incomplete in [true, false] {
+                f.events.lock().unwrap().clear();
+                f.observation["visual_task"]["complete"] = json!(!incomplete);
+                f.observation["visual_task"]["direction"] = json!("ambiguous");
+                assert!(execute(&f, json!({}), None).await.unwrap().answer.is_none());
+                assert!(!f.events.lock().unwrap().contains(&"answer"));
+            }
+        });
     }
     #[test]
     fn auto_pipeline_is_sequential_and_session_checked() {

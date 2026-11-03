@@ -42,8 +42,9 @@ export function parseAnswer(value: unknown, observation: QuestionObservation): A
     return result
   }
   if ((observation.question_type === 'true_false') !== (result.true_false_answer !== null)) return invalid()
+  if (observation.visual_task?.requested_output !== 'selection' && (observation.visual_task?.kind === 'editing_prompt' || observation.visual_task?.requested_output === 'editing_prompt') && (result.answer_text === null || result.code_answer !== null)) return invalid()
   if (observation.options.length || ['multiple_choice', 'multiple_select'].includes(observation.question_type)) {
-    const expected = ['multiple_choice', 'true_false'].includes(observation.question_type) ? 1 : observation.required_selection_count
+    const expected = ['multiple_choice', 'true_false'].includes(observation.question_type) || observation.visual_task?.kind === 'odd_one_out' ? 1 : observation.required_selection_count
     if (!result.selected_options.length || (expected !== null && result.selected_options.length !== expected)) return invalid()
     if (observation.question_type === 'true_false') {
       const chosen = observation.options.find(option => option.label === result.selected_options[0])?.text.trim().toLowerCase().replace(/\.$/, '')

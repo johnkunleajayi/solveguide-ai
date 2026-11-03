@@ -1,10 +1,23 @@
 import type { QuestionObservation } from '../vision/types'
 import type { AnswerState } from '../answer/controller'
+import { useState } from 'react'
+
+/** User-triggered clipboard write only; never copies image data or provider metadata. */
+export async function copyResponse(text: string, write: (text: string) => Promise<void> = value => navigator.clipboard.writeText(value)): Promise<boolean> {
+  try { await write(text); return true } catch { return false }
+}
+function CopyResponse({ text }: { text: string }) {
+  const [status, setStatus] = useState('')
+  return <div><button className="button" onClick={() => { void copyResponse(text).then(ok => setStatus(ok ? 'Response copied.' : 'Copy unavailable. Select the prompt text and copy it manually.')) }}>Copy Response</button><span role="status" aria-live="polite">{status}</span></div>
+}
 export function AnswerRecommendationView({ state, observation, onRequest, onCancel, enabled, onOpenDocument, automatic = false, headingId = 'recommendation-title' }: { headingId?: string; automatic?: boolean; state: AnswerState; observation: QuestionObservation | null; onRequest: () => void; onCancel: () => void; enabled: boolean; onOpenDocument?: (id: string) => void }) {
   const answer = state.result
   const abstained = answer?.status === 'insufficient_information' || answer?.status === 'unsupported'
+  const visual = observation?.visual_task
+  const editing = visual?.requested_output !== 'selection' && (visual?.kind === 'editing_prompt' || visual?.requested_output === 'editing_prompt')
+  const title = editing ? 'Suggested Editing Prompt' : visual?.kind === 'odd_one_out' || visual?.kind === 'sequence' ? 'Suggested Selection' : visual ? 'Visual Explanation' : answer?.question_type === 'essay' ? 'Suggested response' : 'Suggested answer'
   return <section className="recommendation-area" data-status={answer?.status ?? state.phase} aria-labelledby={headingId}>
-    <header className="section-heading"><h2 id={headingId}><span className="section-index" aria-hidden="true">03</span>{answer?.question_type === 'essay' ? 'Suggested response' : 'Suggested answer'}</h2><span className="eyebrow">WHAT WE RECOMMEND</span></header>
+    <header className="section-heading"><h2 id={headingId}><span className="section-index" aria-hidden="true">03</span>{title}</h2><span className="eyebrow">WHAT WE RECOMMEND</span></header>
     <div className="recommendation-content">
       {state.phase === 'idle' && <p>Ready when you are. Request a recommendation from the observed question.</p>}
       {state.phase === 'loading' && <div role="status" aria-live="polite"><span className="eyebrow">PREPARING A RECOMMENDATION</span><p>Considering the observed question. Your screenshot is not sent again.</p><button className="button" onClick={onCancel}>Cancel recommendation</button></div>}
@@ -14,6 +27,8 @@ export function AnswerRecommendationView({ state, observation, onRequest, onCanc
         {answer.selected_options.length > 0 && <ul className="recommended-options" aria-label="Recommended options">{answer.selected_options.map(label => <li key={label}><strong>{label}</strong><span>{observation?.options.find(option => option.label === label)?.text}</span></li>)}</ul>}
         {answer.true_false_answer !== null && <p className="answer-direct">{answer.true_false_answer ? 'True' : 'False'}</p>}
         {answer.answer_text && <p className="answer-direct">{answer.answer_text}</p>}
+        {visual && answer.answer_text && !abstained && <CopyResponse key={answer.answer_text} text={answer.answer_text}/>}
+        {visual && <p className="capture-privacy">Visual reasoning uses the observed image descriptions. Unreadable or off-screen details cannot be verified. Visible image facts are not document evidence.</p>}
         {answer.code_answer && <pre className="answer-code" aria-label={`Suggested ${answer.code_answer.language ?? ''} code`}><code>{answer.code_answer.code}</code></pre>}
         <div className="recommendation-explanation"><h3>{abstained ? 'What to review' : answer.question_type === 'mathematics' ? 'Explanation / key steps' : 'Why'}</h3><p>{answer.explanation}</p>{answer.key_points.length > 0 && <ol>{answer.key_points.map((point, i) => <li key={i}>{point}</li>)}</ol>}</div>
         {!abstained && <p className="answer-confidence">Answer confidence · {Math.round(answer.confidence * 100)}%</p>}

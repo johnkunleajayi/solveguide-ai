@@ -115,6 +115,10 @@ class Retriever:
         for element in getattr(observation, "visual_elements", []):
             query_parts.extend([element.description, element.text or "", element.language or ""])
         query_parts.extend(getattr(observation, "visible_context", []))
+        task = getattr(observation, "visual_task", None)
+        if task:
+            query_parts.extend(image.description for image in task.images)
+            query_parts.extend(task.observed_changes)
         query = "\n".join(query_parts).encode()[:6000].decode("utf-8", errors="ignore")
         vector = (await self.embedding.embed([query]))[0] if semantic else None
         method = "semantic_pgvector" if semantic else "lexical"

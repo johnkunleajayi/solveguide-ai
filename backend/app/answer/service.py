@@ -2,6 +2,12 @@ from app.answer.context import LearningContext
 from app.answer.errors import AnswerError
 from app.answer.provider import AnswerProvider
 from app.answer.schemas import AnswerRecommendation
+from app.answer.visual import (
+    compose_editing_response,
+    editing_response,
+    editing_task,
+    visual_limitation,
+)
 from app.diagnostics import emit, span
 from app.schemas import QuestionObservation
 
@@ -62,6 +68,17 @@ def validate_recommendation(
         return answer
     if answer.status in ("insufficient_information", "unsupported"):
         return answer
+    if editing_task(observation):
+        if answer.answer_text is None or answer.code_answer is not None:
+            raise AnswerError(
+                "invalid_answer_response", "The provider did not return a copyable editing prompt."
+            )
+        expected = editing_response(observation)
+        if expected and (answer.answer_text, answer.explanation) != expected:
+            raise AnswerError(
+                "invalid_answer_response",
+                "The editing response did not preserve the observed comparison facts.",
+            )
     if observation.question_type != "true_false" and answer.true_false_answer is not None:
         raise AnswerError(
             "invalid_answer_response", "The provider returned an unexpected true/false response."
@@ -73,6 +90,8 @@ def validate_recommendation(
     if labels or observation.question_type in ("multiple_choice", "multiple_select"):
         expected = observation.required_selection_count
         if observation.question_type in ("multiple_choice", "true_false"):
+            expected = 1
+        if observation.visual_task and observation.visual_task.kind == "odd_one_out":
             expected = 1
         if not answer.selected_options or (
             expected is not None and len(answer.selected_options) != expected
@@ -102,6 +121,9 @@ class AnswerService:
     async def recommend(
         self, observation: QuestionObservation, context: LearningContext | None = None
     ) -> AnswerRecommendation:
+        limitation = visual_limitation(observation)
+        if limitation:
+            return abstain(observation, "insufficient_information", limitation)
         if (
             observation.status != "detected"
             or not observation.question_text
@@ -150,6 +172,7 @@ class AnswerService:
                 else await self.provider.recommend(observation)
             )
             result = AnswerRecommendation.model_validate(result.model_dump())
+            result = compose_editing_response(observation, result)
             result = validate_recommendation(observation, result)
             emit(
                 "answer_decision",

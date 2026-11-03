@@ -889,3 +889,40 @@ def test_materials_only_cannot_invoke_general_supplement_helper(setup_rag):
             )
         )
     s.provider.recommend.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["context_guided", "materials_only"])
+def test_visual_reasoning_uses_owned_document_citations_and_bounded_visual_query(setup_rag, mode):
+    s = setup_rag
+    data = s.observation.model_dump()
+    data.update(question_type="visual_reasoning", question_text="Select the odd shape.")
+    data["visual_task"] = dict(
+        kind="odd_one_out",
+        complete=True,
+        direction="not_applicable",
+        image_count=2,
+        observed_changes=[],
+        images=[
+            dict(identifier="A", position="left", role="option", description="Circle is round."),
+            dict(
+                identifier="B", position="right", role="option", description="Square has corners."
+            ),
+        ],
+    )
+    s.observation = QuestionObservation.model_validate(data)
+    s.answer_data["question_type"] = "visual_reasoning"
+
+    async def run():
+        await indexed(s, "semantic_pgvector")
+        s.embedding.embed.reset_mock()
+        s.provider.recommend_grounded.return_value = draft(s)
+        result = await s.service.recommend(s.repo.owner, request(s, mode))
+        query = s.embedding.embed.await_args.args[0][0]
+        assert "Circle is round" in query and "Square has corners" in query
+        assert len(query.encode()) <= 6000
+        assert result.status == "answered" and result.grounding_status == "document_supported"
+        assert result.citations[0].document_id == str(s.repo.identifier)
+        assert result.citations[0].chunk_id == str(s.repo.parts[0].id)
+        s.provider.recommend.assert_not_awaited()
+
+    asyncio.run(run())
