@@ -92,13 +92,13 @@ impl Default for Snapshot {
     }
 }
 struct Cancellation {
-    flag: AtomicBool,
+    flag: Arc<AtomicBool>,
     wake: tokio::sync::Notify,
 }
 impl Cancellation {
     fn new() -> Self {
         Self {
-            flag: AtomicBool::new(false),
+            flag: Arc::new(AtomicBool::new(false)),
             wake: tokio::sync::Notify::new(),
         }
     }
@@ -137,12 +137,15 @@ struct Inner {
     selection: Option<Selection>,
     cancel: Option<Arc<Cancellation>>,
     worker: Option<tokio::task::AbortHandle>,
+    answer_action: Option<bool>, // true: explicit capture; false: dismissed/ready
+    next_answer_context: Option<(String, Vec<String>)>,
 }
 pub struct MonitorState(
     Mutex<Inner>,
     AtomicU64,
     Arc<tokio::sync::Semaphore>,
     tokio::sync::Notify,
+    tokio::sync::Notify, // Explicit answer actions must not invalidate session checks.
 );
 impl Default for MonitorState {
     fn default() -> Self {
@@ -150,6 +153,7 @@ impl Default for MonitorState {
             Mutex::new(Inner::default()),
             AtomicU64::new(0),
             Arc::new(tokio::sync::Semaphore::new(1)),
+            tokio::sync::Notify::new(),
             tokio::sync::Notify::new(),
         )
     }
@@ -175,6 +179,37 @@ impl MonitorState {
             }
         }
         Ok(Snapshot::default())
+    }
+
+    fn answer_action(&self, capture: bool) -> Result<()> {
+        let mut inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let running = inner.cancel.as_ref().is_some_and(|c| !c.stopped());
+        inner.snapshot.generation += 1;
+        if let Some(worker) = inner.worker.take() {
+            worker.abort();
+        }
+        if let Some(clock) = inner.snapshot.clock.take() {
+            clock.finish("cancelled");
+        }
+        inner.snapshot.performance = None;
+        inner.snapshot.observation = None;
+        inner.snapshot.answer = None;
+        if let Some((mode, documents)) = inner.next_answer_context.take() {
+            inner.snapshot.mode = mode;
+            inner.snapshot.document_ids = documents;
+        }
+        if running {
+            inner.snapshot.phase = "monitoring".into();
+        }
+        inner.snapshot.message = if capture {
+            "Capturing the current source..."
+        } else {
+            "Capture ready. Choose New Capture when ready."
+        }
+        .into();
+        inner.answer_action = running.then_some(capture);
+        self.4.notify_one();
+        Ok(())
     }
 
     pub(crate) fn log_action(&self, action: &str, reason: &str) {
@@ -211,15 +246,19 @@ impl MonitorState {
         phase: &str,
         message: &str,
     ) {
-        // Never hold monitor state while dispatching native window events.
-        let panel = if keep {
-            None
-        } else {
-            app.get_webview_window("answer-panel")
-        };
         if self.reset(expected, keep, phase, message) {
-            if let Some(panel) = panel {
-                let _ = panel.destroy();
+            let has_answer = self
+                .0
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .snapshot
+                .answer
+                .is_some();
+            // Stopping resources does not dismiss the user's retained solution/window.
+            if !keep && !has_answer {
+                if let Some(panel) = app.get_webview_window("answer-panel") {
+                    let _ = panel.destroy();
+                }
             }
         }
     }
@@ -240,8 +279,12 @@ impl MonitorState {
         self.1.fetch_add(1, Ordering::SeqCst);
         self.3.notify_waiters();
         inner.run += 1;
+        inner.answer_action = None;
         if let Some(cancel) = inner.cancel.take() {
             cancel.cancel();
+        }
+        if let Some(target) = inner.selection.as_ref().and_then(|s| s.target.as_ref()) {
+            target.stop();
         }
         if let Some(worker) = inner.worker.take() {
             worker.abort();
@@ -249,14 +292,16 @@ impl MonitorState {
         inner.snapshot.phase = phase.into();
         inner.snapshot.message = message.into();
         inner.snapshot.generation += 1;
-        inner.snapshot.observation = None;
-        inner.snapshot.answer = None;
+        if inner.snapshot.answer.is_none() {
+            inner.snapshot.observation = None;
+        }
         if let Some(clock) = inner.snapshot.clock.take() {
             clock.finish("cancelled");
         }
         inner.snapshot.performance = None;
-        if !keep {
+        if !keep && inner.snapshot.answer.is_none() {
             inner.selection = None;
+            inner.next_answer_context = None;
             inner.snapshot = Snapshot {
                 message: message.into(),
                 generation: inner.snapshot.generation,
@@ -268,12 +313,15 @@ impl MonitorState {
     fn current(&self, run: u64, generation: u64) -> bool {
         let inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
         inner.run == run
+            && inner.answer_action.is_none()
             && inner.snapshot.generation == (run << 32) + generation
             && inner.cancel.as_ref().is_some_and(|c| !c.stopped())
     }
     fn publish(&self, run: u64, generation: u64, action: impl FnOnce(&mut Snapshot)) -> bool {
         let mut inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if inner.run != run
+            || inner.answer_action.is_some()
+            || inner.snapshot.answer.is_some()
             || inner.snapshot.generation != (run << 32) + generation
             || inner.cancel.as_ref().is_none_or(|c| c.stopped())
         {
@@ -293,7 +341,10 @@ impl MonitorState {
     }
     fn change(&self, run: u64, action: impl FnOnce(&mut Snapshot)) -> bool {
         let mut inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        if inner.run != run || inner.cancel.as_ref().is_none_or(|c| c.stopped()) {
+        if inner.run != run
+            || inner.answer_action.is_some()
+            || inner.cancel.as_ref().is_none_or(|c| c.stopped())
+        {
             return false;
         }
         action(&mut inner.snapshot);
@@ -316,6 +367,8 @@ pub enum Operation {
         revision: u32,
         config: Option<Config>,
     },
+    NewCapture {},
+    Dismiss {},
     Pause {},
     Resume {},
     Stop {
@@ -541,6 +594,29 @@ pub async fn monitor_control(
             )
             .await?;
         }
+        Operation::NewCapture {} => {
+            let restart = {
+                let inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
+                if inner.cancel.as_ref().is_some_and(|c| !c.stopped()) {
+                    None
+                } else {
+                    Some(inner.selection.clone().ok_or("source_required"))
+                }
+            };
+            state.answer_action(true)?;
+            if let Some(selection) = restart {
+                begin(
+                    &app,
+                    Selection {
+                        context_signature: None,
+                        ..selection?
+                    },
+                )
+                .await?;
+                state.answer_action(true)?;
+            }
+        }
+        Operation::Dismiss {} => state.answer_action(false)?,
         Operation::Pause {} => {
             state.log_action("pause", "user_requested");
             state.stop(
@@ -556,7 +632,7 @@ pub async fn monitor_control(
                 &app,
                 false,
                 "stopped",
-                "Monitoring stopped. Live content cleared.",
+                "Monitoring stopped. Existing answer retained until Dismiss or New Capture.",
             )
         }
         Operation::ShowPanel {} | Operation::FocusPanel {} => {
@@ -612,7 +688,13 @@ pub async fn monitor_control(
     }
     let (run, selection) = {
         let inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
-        (inner.run, inner.selection.clone())
+        (
+            inner.run,
+            inner
+                .selection
+                .clone()
+                .filter(|_| inner.cancel.as_ref().is_some_and(|c| !c.stopped())),
+        )
     };
     if let Some(selection) = selection {
         let auth = app.state::<AuthState>();
@@ -712,6 +794,12 @@ async fn begin_inner(app: &tauri::AppHandle, mut selection: Selection) -> Result
         let cancel = Arc::new(Cancellation::new());
         inner.cancel = Some(cancel.clone());
         inner.selection = Some(selection.clone());
+        inner.answer_action = None;
+        let retained = inner
+            .snapshot
+            .answer
+            .is_some()
+            .then(|| inner.snapshot.clone());
         inner.snapshot = Snapshot {
             phase: "monitoring".into(),
             source: Some(selection.source.clone()),
@@ -727,8 +815,44 @@ async fn begin_inner(app: &tauri::AppHandle, mut selection: Selection) -> Result
             message: "Monitoring selected source. Waiting for stable content.".into(),
             ..Snapshot::default()
         };
+        if let Some(retained) = retained {
+            inner.next_answer_context = Some((
+                inner.snapshot.mode.clone(),
+                inner.snapshot.document_ids.clone(),
+            ));
+            inner.snapshot.answer = retained.answer;
+            inner.snapshot.observation = retained.observation;
+            inner.snapshot.mode = retained.mode;
+            inner.snapshot.document_ids = retained.document_ids;
+            inner.snapshot.question_number = retained.question_number;
+            inner.snapshot.message =
+                "Monitoring resumed. Existing answer retained until Dismiss or New Capture.".into();
+        }
         (inner.run, cancel)
     };
+    let mut startup_guard = Termination {
+        run,
+        cancel: cancel.clone(),
+        trace: trace.clone(),
+        target: selection.target.clone(),
+    };
+    let target = selection.target.clone().expect("validated capture target");
+    let source = selection.source.clone();
+    let flag = cancel.flag.clone();
+    if let Err(code) = tauri::async_runtime::spawn_blocking(move || target.start(source, flag))
+        .await
+        .map_err(|_| "capture_failed".to_owned())
+        .and_then(|r| r.map_err(|e| e.code.to_owned()))
+    {
+        state.stop_run(
+            app,
+            run,
+            true,
+            "error",
+            "Capture could not start. Resume explicitly.",
+        );
+        return Err(code);
+    }
     if let Err(e) = panel::show(app, false) {
         state.stop_run(
             app,
@@ -772,6 +896,7 @@ async fn begin_inner(app: &tauri::AppHandle, mut selection: Selection) -> Result
     tauri::async_runtime::spawn(async move {
         run_loop(handle, run, selection, cancel).await;
     });
+    startup_guard.target = None; // The run-loop guard now owns teardown.
     Ok(())
 }
 fn selection_mode(config: &Value) -> &str {
@@ -1016,10 +1141,14 @@ struct Termination {
     run: u64,
     cancel: Arc<Cancellation>,
     trace: Trace,
+    target: Option<Arc<capture::MonitorTarget>>,
 }
 impl Drop for Termination {
     fn drop(&mut self) {
-        if !self.cancel.stopped() {
+        if let Some(target) = &self.target {
+            target.stop_for(&self.cancel.flag);
+        }
+        if self.target.is_some() && !self.cancel.stopped() {
             diag::emit(
                 "monitor_unexpected_termination",
                 "WARNING",
@@ -1039,6 +1168,7 @@ async fn run_loop(
         run,
         cancel: cancel.clone(),
         trace: Trace::session(&selection.trace_id, None),
+        target: selection.target.clone(),
     };
     let mut gate = Gate::new();
     let mut completed_frame = CompletedFrame::default();
@@ -1056,14 +1186,20 @@ async fn run_loop(
     let mut worker: Option<tauri::async_runtime::JoinHandle<Result<Outcome>>> = None;
     let mut heartbeat: Option<scheduling::Heartbeat> = None;
     let mut pending_result = None;
+    let mut capture_ready = false;
+    let mut explicit_capture = false;
     loop {
-        let wake = scheduling::wake(
+        let monitor_state = app.state::<MonitorState>();
+        let wake = tokio::select! {
+        biased;
+        _ = monitor_state.4.notified() => scheduling::Wake::Sample,
+        value = scheduling::wake(
             &mut worker,
             &mut heartbeat,
             cancel.cancelled(),
             Duration::from_millis(selection.config.interval_ms),
-        )
-        .await;
+        ) => value,
+        };
         match wake {
             scheduling::Wake::Cancel => break,
             scheduling::Wake::Worker(value) => {
@@ -1097,6 +1233,29 @@ async fn run_loop(
             break;
         }
         let state = app.state::<MonitorState>();
+        let action = {
+            let mut inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
+            inner
+                .answer_action
+                .take()
+                .map(|capture| (capture, inner.snapshot.generation))
+        };
+        if let Some((capture, revision)) = action {
+            if let Some(old) = worker.take() {
+                old.abort();
+                let _ = old.await;
+            }
+            pending_result = None;
+            pending_frame = None;
+            candidate_clock = None;
+            retry_pending = false;
+            generation = revision & 0xffff_ffff;
+            gate = Gate::new();
+            completed_frame = CompletedFrame::default();
+            last = None;
+            capture_ready = !capture;
+            explicit_capture = capture;
+        }
         let now = started.elapsed().as_millis() as u64;
         let auth = app.state::<AuthState>();
         let credential = tokio::select! {_ = cancel.cancelled()=>break,result=auth.library_credential_present(selection.epoch)=>result};
@@ -1135,6 +1294,19 @@ async fn run_loop(
             );
             break;
         }
+        // Retained answers and dismissed content never sample or dispatch AI work.
+        // Authentication/session and source-liveness checks above remain active.
+        if capture_ready
+            || state
+                .0
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .snapshot
+                .answer
+                .is_some()
+        {
+            continue;
+        }
         let token = cancel.clone();
         let capture = app.state::<Arc<capture::CaptureState>>().inner().clone();
         let capture_started = Instant::now();
@@ -1163,6 +1335,15 @@ async fn run_loop(
                 break;
             }
         };
+        if state
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .answer_action
+            .is_some()
+        {
+            continue; // An explicit action superseded this sample/result.
+        }
         let sampled = Instant::now();
         let capture_duration = capture_started.elapsed();
         let sample_gap = previous_sample.map(|s| sampled.duration_since(s));
@@ -1205,7 +1386,7 @@ async fn run_loop(
                 s.phase = "monitoring".into();
                 s.message = "Source changed. Waiting for stable content.".into();
             }) {
-                break;
+                continue;
             }
         }
         if let Some(clock) = &candidate_clock {
@@ -1251,7 +1432,17 @@ async fn run_loop(
                             }
                         }
                     }) {
-                        break;
+                        continue;
+                    }
+                    if state
+                        .0
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .snapshot
+                        .answer
+                        .is_some()
+                    {
+                        continue;
                     }
                 }
                 Ok(Err(code)) => {
@@ -1305,7 +1496,7 @@ async fn run_loop(
                 }
             }
         }
-        if stable && worker.is_none() && now >= next_request {
+        if (stable && now >= next_request || explicit_capture) && worker.is_none() {
             let mut fingerprint_timer = candidate_clock
                 .as_ref()
                 .map(|c| c.stage("frame_fingerprint"));
@@ -1342,6 +1533,7 @@ async fn run_loop(
                 );
                 break;
             }
+            explicit_capture = false;
             attempts += 1;
             if let Some(clock) = &candidate_clock {
                 clock.candidate_capture(capture_started, sampled);
@@ -1404,7 +1596,11 @@ async fn run_loop(
             });
             {
                 let mut inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
-                if inner.run == run && !cancel.stopped() {
+                if inner.run == run
+                    && inner.answer_action.is_none()
+                    && inner.snapshot.generation == (run << 32) + generation
+                    && !cancel.stopped()
+                {
                     inner.worker = Some(task.inner().abort_handle());
                     let _ = permit.send(());
                 } else {
@@ -1423,6 +1619,67 @@ async fn run_loop(
 mod tests {
     use super::*;
     #[test]
+    fn explicit_answer_actions_invalidate_late_results_without_stopping_capture() {
+        let state = MonitorState::default();
+        let cancel = Arc::new(Cancellation::new());
+        {
+            let mut inner = state.0.lock().unwrap();
+            inner.run = 1;
+            inner.cancel = Some(cancel.clone());
+            inner.snapshot.generation = (1 << 32) + 1;
+            inner.snapshot.answer = Some(json!({"status":"answered"}));
+        }
+        for capture in [false, true] {
+            let old = state.0.lock().unwrap().snapshot.generation & 0xffff_ffff;
+            state.answer_action(capture).unwrap();
+            assert!(!state.current(1, old));
+            assert!(!state.change(1, |s| s.generation = 0));
+            assert!(!state.publish(1, old, |s| s.answer = Some(json!({"stale":true}))));
+            let inner = state.0.lock().unwrap();
+            assert!(inner.snapshot.answer.is_none());
+            assert!(inner.snapshot.observation.is_none());
+            assert_eq!(inner.answer_action, Some(capture));
+            assert!(!cancel.stopped());
+        }
+    }
+    #[test]
+    fn shutdown_preserves_solution_but_explicit_actions_clear_it() {
+        for (phase, keep, message) in [
+            ("stopped", false, "Session validation timed out"),
+            ("paused", true, "Paused"),
+            ("stopped", false, "Stopped"),
+            ("error", true, "Capture failed"),
+        ] {
+            for capture in [false, true] {
+                let state = MonitorState::default();
+                let cancel = Arc::new(Cancellation::new());
+                {
+                    let mut inner = state.0.lock().unwrap();
+                    inner.run = 1;
+                    inner.cancel = Some(cancel.clone());
+                    inner.snapshot.generation = (1 << 32) + 1;
+                    inner.snapshot.answer = Some(json!({"solution":true}));
+                    inner.snapshot.observation = Some(json!({"question":true}));
+                    inner.snapshot.panel_visible = true;
+                }
+                assert!(state.reset(Some(1), keep, phase, message));
+                assert!(cancel.stopped());
+                {
+                    let inner = state.0.lock().unwrap();
+                    assert_eq!(inner.snapshot.answer, Some(json!({"solution":true})));
+                    assert!(inner.snapshot.observation.is_some());
+                    assert!(inner.snapshot.panel_visible);
+                    assert_eq!(inner.snapshot.phase, phase);
+                    assert_eq!(inner.snapshot.message, message);
+                }
+                state.answer_action(capture).unwrap();
+                assert!(!state.publish(1, 1, |s| s.answer = Some(json!({"stale":true}))));
+                assert!(state.0.lock().unwrap().snapshot.answer.is_none());
+                assert!(state.0.lock().unwrap().snapshot.observation.is_none());
+            }
+        }
+    }
+    #[test]
     fn cancellation_before_wait_registration_is_not_lost() {
         tauri::async_runtime::block_on(async {
             let cancel = Cancellation::new();
@@ -1431,6 +1688,22 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+    #[test]
+    fn held_answer_cannot_be_replaced_by_automatic_results() {
+        let state = MonitorState::default();
+        {
+            let mut inner = state.0.lock().unwrap();
+            inner.run = 1;
+            inner.cancel = Some(Arc::new(Cancellation::new()));
+            inner.snapshot.generation = (1 << 32) + 1;
+            inner.snapshot.answer = Some(json!({"original":true}));
+        }
+        assert!(!state.publish(1, 1, |s| s.answer = Some(json!({"replacement":true}))));
+        assert_eq!(
+            state.0.lock().unwrap().snapshot.answer,
+            Some(json!({"original":true}))
+        );
     }
     #[test]
     fn diagnostic_ack_is_content_free_and_cannot_control_monitoring() {
@@ -1528,7 +1801,8 @@ mod tests {
         }
         assert!(state.reset(Some(1), true, "paused", "Paused"));
         assert!(old.stopped());
-        assert!(state.0.lock().unwrap().snapshot.answer.is_none());
+        assert!(state.0.lock().unwrap().snapshot.answer.is_some());
+        state.answer_action(true).unwrap();
         assert!(!state.change(1, |s| s.answer = Some(json!({}))));
         let fresh = Arc::new(Cancellation::new());
         {
@@ -1546,7 +1820,7 @@ mod tests {
         assert!(state.0.lock().unwrap().snapshot.answer.is_some());
         assert!(state.reset(None, false, "stopped", "Stopped"));
         assert!(fresh.stopped());
-        assert!(state.0.lock().unwrap().snapshot.answer.is_none());
+        assert!(state.0.lock().unwrap().snapshot.answer.is_some());
     }
     #[test]
     fn stop_invalidates_a_start_that_is_waiting_for_validation() {

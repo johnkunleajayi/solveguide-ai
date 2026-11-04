@@ -376,7 +376,8 @@ pub(crate) fn sample(
     let _busy = state.enter()?;
     #[cfg(windows)]
     {
-        windows::capture_frame(source, Some(cancelled), Some(&target.target))
+        let _ = source; // Identity was pinned and validated when this run started.
+        target.target.sample(cancelled)
     }
     #[cfg(not(windows))]
     {
@@ -388,12 +389,37 @@ pub(crate) fn sample(
     }
 }
 
-// An identity reference, not a running capture session or frame buffer.
+// Pinned identity plus an explicitly started/stopped native monitoring session.
 pub(crate) struct MonitorTarget {
     #[cfg(windows)]
     target: windows::Target,
 }
 impl MonitorTarget {
+    pub(crate) fn start(
+        &self,
+        source: Source,
+        cancelled: std::sync::Arc<AtomicBool>,
+    ) -> Result<()> {
+        #[cfg(windows)]
+        {
+            self.target.start(source, cancelled)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (source, cancelled);
+            Err(unavailable())
+        }
+    }
+    pub(crate) fn stop(&self) {
+        #[cfg(windows)]
+        self.target.stop();
+    }
+    pub(crate) fn stop_for(&self, run: &std::sync::Arc<AtomicBool>) {
+        #[cfg(windows)]
+        self.target.stop_for(run);
+        #[cfg(not(windows))]
+        let _ = run;
+    }
     pub(crate) fn closed(&self) -> bool {
         #[cfg(windows)]
         {

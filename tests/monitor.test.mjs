@@ -34,10 +34,10 @@ test('stop wins over pending startup and stale snapshot responses',async()=>{
  const starting=c.command(start);await c.command({kind:'stop'});pending.resolve(active);assert.equal(await starting,false);assert.equal(c.getSnapshot().snapshot.answer,null)
  const old=deferred();const d=createMonitorController(op=>op.kind==='snapshot'?old.promise:Promise.resolve(initial));const refresh=d.refresh();await d.command({kind:'stop'});old.resolve(active);await refresh;assert.equal(d.getSnapshot().snapshot.phase,'stopped')
 })
-test('pause clears obsolete answers synchronously; resume and source-change stop are explicit',async()=>{
- const pending=deferred(),calls=[];const c=createMonitorController(async op=>{calls.push(op);return op.kind==='pause'?pending.promise:op.kind==='stop'?initial:active})
- await c.command(start);const pausing=c.command({kind:'pause'});assert.equal(c.getSnapshot().snapshot.answer,null);assert.equal(c.getSnapshot().snapshot.phase,'paused')
- pending.resolve({...initial,phase:'paused'});await pausing;await c.command({kind:'resume'});await c.command({kind:'stop'})
+test('pause retains the solution; resume and source-change stop are explicit',async()=>{
+ const pending=deferred(),calls=[];const c=createMonitorController(async op=>{calls.push(op);return op.kind==='pause'?pending.promise:op.kind==='stop'?{...active,phase:'stopped'}:active})
+ await c.command(start);const pausing=c.command({kind:'pause'});assert.equal(c.getSnapshot().snapshot.answer,recommendation);assert.equal(c.getSnapshot().snapshot.phase,'paused')
+ pending.resolve({...active,phase:'paused'});await pausing;assert.equal(c.getSnapshot().snapshot.answer,recommendation);await c.command({kind:'resume'});await c.command({kind:'stop'})
  assert.deepEqual(calls.map(v=>v.kind),['start','pause','resume','stop'])
 })
 test('logout/session unmount stops native work and ignores late answers',async()=>{
@@ -45,13 +45,13 @@ test('logout/session unmount stops native work and ignores late answers',async()
  const request=c.command(start);c.dispose(true);pending.resolve(active);await request
  assert.deepEqual(calls,['start','stop']);assert.equal(c.getSnapshot().snapshot.answer,null)
 })
-test('provider/transport errors clear old content and propagate auth expiry',async()=>{
+test('authentication errors stop monitoring without erasing the displayed solution',async()=>{
  let fail=false,denied;const c=createMonitorController(async()=>{if(fail)throw {code:'session_expired',message:'Sign in again.'};return active},e=>{denied=e})
- await c.refresh();fail=true;await c.refresh();assert.equal(c.getSnapshot().snapshot.answer,null);assert.equal(denied.code,'session_expired');assert.match(c.getSnapshot().error,/Sign in/)
+ await c.refresh();fail=true;await c.refresh();assert.equal(c.getSnapshot().snapshot.answer,recommendation);assert.equal(denied.code,'session_expired');assert.match(c.getSnapshot().error,/Sign in/)
 })
-test('snapshot validation reuses strict observation/answer contracts and rejects inactive content',()=>{
+test('snapshot validation reuses strict contracts and permits retained inactive solutions',()=>{
  assert.equal(types.parseMonitor(active).answer.answer_text,recommendation.answer_text)
- for(const patch of [{phase:'stopped'},{phase:'paused'},{answer:{...recommendation,selected_options:['FAKE']}},{observation:null},{generation:-1},{sessionToken:'must-not-cross-IPC'}])assert.throws(()=>types.parseMonitor({...active,...patch}))
+ for(const patch of [{answer:{...recommendation,selected_options:['FAKE']}},{observation:null},{generation:-1},{sessionToken:'must-not-cross-IPC'}])assert.throws(()=>types.parseMonitor({...active,...patch}))
 })
 test('Materials Only citations remain selected-document scoped in the monitor',()=>{
  const raw={...recommendation,reasoning_mode:'materials_only',grounding_status:'document_supported',retrieval_method:'lexical',general_reasoning:[],citations:[{chunk_id:'00000000-0000-0000-0000-000000000001',document_id:'owned',document_title:'Practice reference',page_number:1,location:'Page 1',excerpt:'Supporting passage.',supports:['answer','explanation']}]}
@@ -94,4 +94,67 @@ test('DEBUG performance metadata is strict and cannot replace generation or expo
  for(const invalid of [null,{}, {...performance,generation:2},{...performance,traceId:'private contents'}, {...performance,observedToSnapshotMs:-1},{...performance,secret:'hidden'}])assert.throws(()=>types.parseMonitor({...active,performance:invalid}))
  assert.throws(()=>types.parseMonitor({...active,performance,localPerformance:{receivedAt:1,validationMs:0}}))
  assert.throws(()=>types.parseMonitor({...initial,performance}))
+})
+
+
+test('New Capture and Dismiss erase immediately and reject late polls and commands',async()=>{
+ for(const kind of ['new_capture','dismiss']) {
+  const old=deferred(),action=deferred();let calls=0
+  const c=createMonitorController(op=>op.kind===kind?action.promise:++calls===1?Promise.resolve(active):old.promise)
+  await c.refresh();const poll=c.refresh();const command=c.command({kind})
+  assert.equal(c.getSnapshot().snapshot.answer,null)
+  assert.equal(c.getSnapshot().snapshot.observation,null)
+  old.resolve(active);await poll;assert.equal(c.getSnapshot().snapshot.answer,null)
+  action.resolve({...initial,phase:'monitoring',generation:2});await command
+  assert.equal(c.getSnapshot().snapshot.answer,null)
+ }
+ const late=deferred();const c=createMonitorController(op=>op.kind==='start'?late.promise:Promise.resolve({...initial,phase:'monitoring'}))
+ const starting=c.command(start);await c.command({kind:'dismiss'});late.resolve(active);assert.equal(await starting,false)
+ assert.equal(c.getSnapshot().snapshot.answer,null)
+})
+
+test('transient snapshot transport failure retains the displayed answer',async()=>{
+ let fail=false;const c=createMonitorController(async()=>{if(fail)throw Error('Network unavailable');return active})
+ await c.refresh();fail=true;await c.refresh()
+ assert.equal(c.getSnapshot().snapshot.answer,recommendation)
+ assert.match(c.getSnapshot().error,/Network unavailable/)
+})
+
+test('floating panel exposes separate New Capture, Dismiss and Hide panel controls',()=>{
+ const calls=[];const c=createMonitorController(async op=>{calls.push(op);return active})
+ const hooks={...React,useEffect:noop,useState:fn=>[typeof fn==='function'?fn():fn,noop],useSyncExternalStore:()=>({snapshot:active,error:null})}
+ const {MonitorPanel}=compile('components/MonitorPanel.tsx',{'react':hooks,'../monitor/controller':{createMonitorController:()=>c},'../monitor/client':{monitorApi:noop},'../hooks/useTheme':{useTheme:()=>({setTheme:noop})},'./MonitorResult':{MonitorResult:()=>null},'../monitor/performance':{createReadyReporter:()=>noop}})
+ const html=render(React.createElement(MonitorPanel));assert.match(html,/>New Capture</);assert.match(html,/>Dismiss</);assert.match(html,/>Hide panel</)
+ assert.equal(calls.length,0)
+})
+
+
+test('timeouts, Pause, Stop and capture failures preserve the solution and separate status',async()=>{
+ for(const phase of ['paused','stopped','error']) {
+  const retained={...active,phase,message:'Monitoring timed out or stopped.'}
+  assert.equal(types.parseMonitor(retained).answer.answer_text,recommendation.answer_text)
+  let current=active;const c=createMonitorController(async()=>current)
+  await c.refresh();current=retained;await c.refresh()
+  assert.equal(c.getSnapshot().snapshot.answer,recommendation)
+  assert.equal(c.getSnapshot().snapshot.message,retained.message)
+  for(const kind of ['pause','stop']) {
+   await c.command({kind});assert.equal(c.getSnapshot().snapshot.answer,recommendation)
+  }
+  const view=compile('components/AnswerRecommendationView.tsx')
+  const {MonitorResult}=compile('components/MonitorResult.tsx',{'./AnswerRecommendationView':view})
+  assert.match(render(React.createElement(MonitorResult,{snapshot:retained})),/A learning example/)
+ }
+})
+
+test('Dismiss and New Capture can clear retained stopped solutions and reject old polls',async()=>{
+ for(const kind of ['dismiss','new_capture']) {
+  const old=deferred(),action=deferred();let count=0
+  const retained={...active,phase:'stopped'}
+  const c=createMonitorController(op=>op.kind===kind?action.promise:++count===1?Promise.resolve(retained):old.promise)
+  await c.refresh();const poll=c.refresh();const clearing=c.command({kind})
+  assert.equal(c.getSnapshot().snapshot.answer,null)
+  old.resolve(retained);await poll;assert.equal(c.getSnapshot().snapshot.answer,null)
+  action.resolve({...initial,phase:kind==='dismiss'?'stopped':'monitoring'});await clearing
+  assert.equal(c.getSnapshot().snapshot.answer,null)
+ }
 })
