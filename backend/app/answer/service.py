@@ -9,6 +9,7 @@ from app.answer.visual import (
     visual_limitation,
 )
 from app.diagnostics import emit, span
+from app.performance import Timing
 from app.schemas import QuestionObservation
 
 
@@ -171,9 +172,10 @@ class AnswerService:
                 if context is not None
                 else await self.provider.recommend(observation)
             )
-            result = AnswerRecommendation.model_validate(result.model_dump())
-            result = compose_editing_response(observation, result)
-            result = validate_recommendation(observation, result)
+            with Timing("answer_validation_formatting"):
+                result = AnswerRecommendation.model_validate(result.model_dump())
+                result = compose_editing_response(observation, result)
+                result = validate_recommendation(observation, result)
             emit(
                 "answer_decision",
                 outcome=result.status,

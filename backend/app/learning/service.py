@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from app.database import PlatformError
 from app.diagnostics import emit, span
 from app.learning.models import LearningSession
+from app.performance import Timing
 from app.rag.schemas import ReasoningRequest
 
 
@@ -61,7 +62,7 @@ class SessionService:
         )
 
     async def read(self, owner):
-        async with self.repository.transaction(owner) as tx:
+        async with self.repository.reading(owner) as tx:
             return dict(
                 draft=await self.view(tx, await tx.current(["draft", "ready"])),
                 active=await self.view(tx, await tx.current(["active"])),
@@ -69,7 +70,7 @@ class SessionService:
 
     @span("active_session_lookup")
     async def active(self, owner):
-        async with self.repository.transaction(owner) as tx:
+        async with self.repository.reading(owner) as tx:
             active = await self.view(tx, await tx.current(["active"]))
         emit(
             "active_session_lookup",
@@ -258,15 +259,17 @@ class SessionService:
             if await tx.current(["active"]):
                 fail("session_required", "Use the active session configuration for this answer.")
 
-    async def configuration(self, owner, identifier, revision):
-        async with self.repository.transaction(owner) as tx:
+    async def configuration(self, owner, identifier, revision, reauthorize=None):
+        async with self.repository.reading(owner) as tx:
+            if reauthorize is not None:
+                await reauthorize(tx.db)
             row = await self.owned(tx, identifier, revision)
             if row.status != "active":
                 fail(
                     "session_changed",
                     "This session has ended. Prepare or recover an active session.",
                 )
-            ids = await tx.links(row)
+            ids = [] if row.mode == "general" else await tx.links(row)
             # General does not read Context Library content, indexes or readiness.
             docs = [] if row.mode == "general" else await tx.documents(ids)
             if issues(row, ids, docs):
@@ -293,8 +296,9 @@ class SessionService:
                 allow_context_transmission=row.allow_context_transmission,
             )
 
-    async def recommend(self, owner, payload, answer_service, rag_service):
-        config = await self.configuration(owner, payload.session_id, payload.session_revision)
+    async def recommend(self, owner, payload, answer_service, rag_service, reauthorize=None):
+        with Timing("session_configuration_before"):
+            config = await self.configuration(owner, payload.session_id, payload.session_revision)
         from app.answer.context import LearningContext
 
         context = LearningContext(purpose=config["purpose"], objective=config["objective"])
@@ -309,7 +313,10 @@ class SessionService:
             )
             result = await rag_service.recommend(owner, request, context=context)
         # Do not publish a late recommendation after end/replacement/deletion.
-        after = await self.configuration(owner, payload.session_id, payload.session_revision)
+        with Timing("session_configuration_after"):
+            after = await self.configuration(
+                owner, payload.session_id, payload.session_revision, reauthorize=reauthorize
+            )
         if config != after:
             fail("session_changed", "The active session changed. Request a new answer.")
         return result

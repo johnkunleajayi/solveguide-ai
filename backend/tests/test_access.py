@@ -125,7 +125,7 @@ def test_database_outage_fails_closed_before_providers(access, image_payload):
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
-    async def unavailable():
+    async def unavailable(**kwargs):
         raise PlatformError("database_unavailable", "Database unavailable.")
         yield
 

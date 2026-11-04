@@ -1,7 +1,9 @@
 //! Explicit, ephemeral native monitor. No database, credential IPC or capture history.
 mod filter;
 mod panel;
+mod performance;
 mod pipeline;
+mod scheduling;
 mod validation;
 use crate::{
     auth::{self, AiKind, AuthState},
@@ -65,6 +67,10 @@ pub struct Snapshot {
     message: String,
     panel_visible: bool,
     privacy_available: bool,
+    #[serde(skip)]
+    clock: Option<Arc<performance::Candidate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    performance: Option<performance::Descriptor>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -80,6 +86,8 @@ impl Default for Snapshot {
             message: "Monitoring starts only when you explicitly activate it.".into(),
             panel_visible: false,
             privacy_available: true,
+            clock: None,
+            performance: None,
         }
     }
 }
@@ -100,6 +108,14 @@ impl Cancellation {
     }
     fn stopped(&self) -> bool {
         self.flag.load(Ordering::Acquire)
+    }
+    async fn cancelled(&self) {
+        let notified = self.wake.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !self.stopped() {
+            notified.await;
+        }
     }
 }
 #[derive(Clone)]
@@ -139,6 +155,28 @@ impl Default for MonitorState {
     }
 }
 impl MonitorState {
+    fn acknowledge_performance(
+        &self,
+        label: &str,
+        generation: u64,
+        receipt_to_ready_ms: u64,
+        validation_ms: u64,
+    ) -> Result<Snapshot> {
+        if label != "answer-panel" || receipt_to_ready_ms > 300_000 || validation_ms > 300_000 {
+            return Err("not_allowed".into());
+        }
+        let inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if diag::performance_enabled()
+            && inner.snapshot.generation == generation
+            && inner.snapshot.answer.is_some()
+        {
+            if let Some(clock) = &inner.snapshot.clock {
+                clock.ready(receipt_to_ready_ms, validation_ms);
+            }
+        }
+        Ok(Snapshot::default())
+    }
+
     pub(crate) fn log_action(&self, action: &str, reason: &str) {
         let inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(selection) = &inner.selection {
@@ -213,6 +251,10 @@ impl MonitorState {
         inner.snapshot.generation += 1;
         inner.snapshot.observation = None;
         inner.snapshot.answer = None;
+        if let Some(clock) = inner.snapshot.clock.take() {
+            clock.finish("cancelled");
+        }
+        inner.snapshot.performance = None;
         if !keep {
             inner.selection = None;
             inner.snapshot = Snapshot {
@@ -261,6 +303,11 @@ impl MonitorState {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    PerformanceReady {
+        generation: u64,
+        receipt_to_ready_ms: u64,
+        validation_ms: u64,
+    },
     Snapshot {},
     Start {
         source_id: String,
@@ -305,15 +352,17 @@ fn allowed(window: &tauri::WebviewWindow) -> Result<()> {
     }
 }
 async fn active(app: &tauri::AppHandle, selection: &Selection) -> Result<Value> {
-    active_for(app, selection, None).await
+    active_for(app, selection, None, "liveness").await
 }
 async fn active_for(
     app: &tauri::AppHandle,
     selection: &Selection,
     candidate: Option<(u64, u64)>,
+    role: &'static str,
 ) -> Result<Value> {
     let trace = Trace::session(&selection.trace_id, candidate);
     let started = Instant::now();
+    let mut timing = diag::StageTimer::new(trace.clone(), "session_validation", role);
     diag::emit(
         "session_check_started",
         "DEBUG",
@@ -380,6 +429,13 @@ async fn active_for(
         Ok(data.clone())
     }, invalidated).await;
     let code = result.as_ref().err().map(String::as_str);
+    timing.finish(if code == Some("request_cancelled") {
+        "cancelled"
+    } else if code.is_some() {
+        "failed"
+    } else {
+        "completed"
+    });
     diag::emit(
         "session_check_finished",
         if code.is_some_and(|c| c != "request_cancelled") {
@@ -395,12 +451,15 @@ async fn active_for(
 fn session_message(code: &str) -> &'static str {
     match code {
         "session_check_timeout"=>"Session validation exceeded its 12-second deadline. Monitoring stopped. Check diagnostics and start explicitly.",
+        "session_validation_timeout"=>"Backend session validation exceeded its request budget. Monitoring stopped; check database diagnostics and retry explicitly.",
         "backend_timeout"=>"The backend request timed out. Monitoring stopped; check diagnostics and retry explicitly.",
+        "database_timeout"=>"Account database validation timed out. Monitoring stopped; check backend diagnostics and retry explicitly.",
+        "database_unavailable"=>"The account database is unavailable. Monitoring stopped; check connectivity and backend diagnostics.",
         "backend_connection_failed"|"backend_unavailable"=>"The backend connection failed. Monitoring stopped; check the backend terminal.",
         "session_expired"|"session_revoked"|"invalid_session"|"sign_in_required"=>"Authentication expired, was revoked, or is unavailable. Sign in again before monitoring.",
         "session_revision_mismatch"|"preparation_changed"=>"The session revision changed. Recover its current configuration before monitoring.",
         "session_missing"|"session_replaced"|"session_not_active"=>"The selected learning session ended or was replaced. Recover an active session before monitoring.",
-        "database_unavailable"|"database_schema"|"database_not_configured"=>"The account/session database check failed. Review backend diagnostics before restarting monitoring.",
+        "database_schema"|"database_not_configured"=>"The account/session database check failed. Review backend diagnostics before restarting monitoring.",
         "session_materials_changed"|"session_materials_not_ready"=>"Session materials changed or are not ready. Review the preparation before monitoring.",
         _=>"Session validation failed. Monitoring stopped; use the diagnostic trace to identify the cause.",
     }
@@ -414,6 +473,18 @@ pub async fn monitor_control(
     allowed(&window)?;
     let state = app.state::<MonitorState>();
     match operation {
+        Operation::PerformanceReady {
+            generation,
+            receipt_to_ready_ms,
+            validation_ms,
+        } => {
+            return state.acknowledge_performance(
+                window.label(),
+                generation,
+                receipt_to_ready_ms,
+                validation_ms,
+            );
+        }
         Operation::Start {
             source_id,
             source_kind,
@@ -562,12 +633,15 @@ pub async fn monitor_control(
             );
         }
     }
-    let snapshot = state
+    let mut snapshot = state
         .0
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .snapshot
         .clone();
+    if diag::performance_enabled() && snapshot.answer.is_some() {
+        snapshot.performance = snapshot.clock.as_ref().map(|c| c.descriptor());
+    }
     Ok(snapshot)
 }
 
@@ -775,7 +849,15 @@ struct NativeServices {
     generation: u64,
 }
 impl Services for NativeServices {
-    async fn session(&self) -> Result<()> {
+    fn trace(&self) -> Trace {
+        Trace::candidate(
+            &self.selection.trace_id,
+            self.run,
+            self.generation,
+            "classification",
+        )
+    }
+    async fn session(&self, role: &'static str) -> Result<()> {
         if !self
             .app
             .state::<MonitorState>()
@@ -787,6 +869,7 @@ impl Services for NativeServices {
             &self.app,
             &self.selection,
             Some((self.run, self.generation)),
+            role,
         )
         .await?;
         if !self
@@ -798,7 +881,7 @@ impl Services for NativeServices {
         }
         Ok(())
     }
-    async fn vision(&self, payload: Value) -> Result<Value> {
+    async fn vision(&self, mut payload: Value) -> Result<Value> {
         if !self
             .app
             .state::<MonitorState>()
@@ -813,6 +896,8 @@ impl Services for NativeServices {
             self.generation,
             "vision",
         );
+        payload["session_id"] = json!(self.selection.session_id);
+        payload["session_revision"] = json!(self.selection.revision);
         unwrap_response(
             auth::request_authenticated_traced(
                 &auth,
@@ -850,6 +935,7 @@ async fn pipeline(
     last: Option<String>,
     run: u64,
     generation: u64,
+    clock: Option<Arc<performance::Candidate>>,
 ) -> Result<Outcome> {
     let services = NativeServices {
         app,
@@ -857,19 +943,31 @@ async fn pipeline(
         run,
         generation,
     };
-    services.session().await?;
     let encoder = services.app.state::<MonitorState>().2.clone();
+    let mut slot_timer = clock.as_ref().map(|c| c.stage("encoder_slot_wait"));
     let permit = encoder
         .acquire_owned()
         .await
         .map_err(|_| "capture_cancelled")?;
+    if let Some(timer) = &mut slot_timer {
+        timer.finish("completed");
+    }
+    let mut image_timer = clock.as_ref().map(|c| c.stage("image_preparation"));
     let image = tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
         frame.encode()
     })
-    .await
-    .map_err(|_| "capture_failed")?
-    .map_err(|e| e.code.to_owned())?;
+    .await;
+    if let Some(timer) = &mut image_timer {
+        timer.finish(if matches!(&image, Ok(Ok(_))) {
+            "completed"
+        } else {
+            "failed"
+        });
+    }
+    let image = image
+        .map_err(|_| "capture_failed")?
+        .map_err(|e| e.code.to_owned())?;
     pipeline::execute(
         &services,
         json!({"media_type":"image/png","image_base64":image.image_base64}),
@@ -903,6 +1001,11 @@ fn terminal(code: &str) -> bool {
             | "session_materials_changed"
             | "source_unavailable"
             | "capture_timeout"
+            | "database_timeout"
+            | "database_unavailable"
+            | "database_schema"
+            | "database_not_configured"
+            | "session_validation_timeout"
             | "source_changed"
     )
 }
@@ -940,6 +1043,8 @@ async fn run_loop(
     let mut gate = Gate::new();
     let mut completed_frame = CompletedFrame::default();
     let mut pending_frame = None;
+    let mut candidate_clock: Option<Arc<performance::Candidate>> = None;
+    let mut previous_sample: Option<Instant> = None;
     let started = Instant::now();
     let mut next_request = 0;
     let mut attempts = 0;
@@ -949,15 +1054,52 @@ async fn run_loop(
     let mut generation = 0;
     let mut next_session_check = 5000; // Startup just validated; do not immediately repeat.
     let mut worker: Option<tauri::async_runtime::JoinHandle<Result<Outcome>>> = None;
+    let mut heartbeat: Option<scheduling::Heartbeat> = None;
+    let mut pending_result = None;
     loop {
-        tokio::select! {_ = cancel.wake.notified()=>break,_=tokio::time::sleep(Duration::from_millis(selection.config.interval_ms))=>{}}
+        let wake = scheduling::wake(
+            &mut worker,
+            &mut heartbeat,
+            cancel.cancelled(),
+            Duration::from_millis(selection.config.interval_ms),
+        )
+        .await;
+        match wake {
+            scheduling::Wake::Cancel => break,
+            scheduling::Wake::Worker(value) => {
+                worker.take();
+                pending_result = Some(value);
+            }
+            scheduling::Wake::Heartbeat(value) => {
+                heartbeat.take();
+                if let Err(code) = value {
+                    diag::emit(
+                        "monitor_session_failure",
+                        "WARNING",
+                        Some(&Trace::session(&selection.trace_id, None)),
+                        json!({"error_code":code,"error_category":diag::category(&code),"run":run}),
+                    );
+                    app.state::<MonitorState>().stop_run(
+                        &app,
+                        run,
+                        false,
+                        "stopped",
+                        session_message(&code),
+                    );
+                    break;
+                }
+                next_session_check = started.elapsed().as_millis() as u64 + 5000;
+                continue;
+            }
+            scheduling::Wake::Sample => {}
+        };
         if cancel.stopped() {
             break;
         }
         let state = app.state::<MonitorState>();
         let now = started.elapsed().as_millis() as u64;
         let auth = app.state::<AuthState>();
-        let credential = tokio::select! {_ = cancel.wake.notified()=>break,result=auth.library_credential_present(selection.epoch)=>result};
+        let credential = tokio::select! {_ = cancel.cancelled()=>break,result=auth.library_credential_present(selection.epoch)=>result};
         if credential.is_err() {
             state.stop_run(
                 &app,
@@ -968,19 +1110,12 @@ async fn run_loop(
             );
             break;
         }
-        if now >= next_session_check {
-            let checked = tokio::select! {_ = cancel.wake.notified()=>break,result=active(&app,&selection)=>result};
-            if let Err(code) = checked {
-                diag::emit(
-                    "monitor_session_failure",
-                    "WARNING",
-                    Some(&Trace::session(&selection.trace_id, None)),
-                    json!({"error_code":code,"error_category":diag::category(&code),"run":run}),
-                );
-                state.stop_run(&app, run, false, "stopped", session_message(&code));
-                break;
-            }
-            next_session_check = started.elapsed().as_millis() as u64 + 5000;
+        if now >= next_session_check && heartbeat.is_none() {
+            let check_app = app.clone();
+            let check_selection = selection.clone();
+            heartbeat = Some(Box::pin(async move {
+                active(&check_app, &check_selection).await
+            }));
         }
         let source = selection.source.clone();
         let target = selection.target.clone().expect("validated source identity");
@@ -1002,6 +1137,7 @@ async fn run_loop(
         }
         let token = cancel.clone();
         let capture = app.state::<Arc<capture::CaptureState>>().inner().clone();
+        let capture_started = Instant::now();
         let frame = tauri::async_runtime::spawn_blocking(move || {
             capture::sample(&capture, source, &token.flag, &target)
         })
@@ -1027,12 +1163,26 @@ async fn run_loop(
                 break;
             }
         };
+        let sampled = Instant::now();
+        let capture_duration = capture_started.elapsed();
+        let sample_gap = previous_sample.map(|s| sampled.duration_since(s));
+        previous_sample = Some(sampled);
         let now = started.elapsed().as_millis() as u64;
         let (changed, stable) =
             gate.observe(Signature::of(&frame), now, selection.config.stabilize_ms);
         if changed {
+            pending_result = None;
             retry_pending = false;
             generation += 1;
+            if let Some(clock) = candidate_clock.take() {
+                clock.finish("superseded");
+            }
+            if diag::performance_enabled() {
+                candidate_clock = Some(Arc::new(performance::Candidate::new(
+                    Trace::candidate(&selection.trace_id, run, generation, "timing"),
+                    (run << 32) + generation,
+                )));
+            }
             diag::emit(
                 "monitor_candidate_changed",
                 "DEBUG",
@@ -1049,6 +1199,7 @@ async fn run_loop(
             }
             if !state.change(run, |s| {
                 s.generation = (run << 32) + generation;
+                s.clock = candidate_clock.clone();
                 s.observation = None;
                 s.answer = None;
                 s.phase = "monitoring".into();
@@ -1057,9 +1208,14 @@ async fn run_loop(
                 break;
             }
         }
-        if worker.as_ref().is_some_and(|w| w.inner().is_finished()) {
+        if let Some(clock) = &candidate_clock {
+            clock.capture(capture_duration, sample_gap);
+            if stable {
+                clock.stable();
+            }
+        }
+        if let Some(result) = pending_result.take() {
             let finished_frame = pending_frame.take();
-            let result = worker.take().expect("finished worker").await;
             match result {
                 Ok(Ok(outcome)) => {
                     if let Some(identity) = finished_frame {
@@ -1073,7 +1229,7 @@ async fn run_loop(
                             &selection.trace_id,
                             Some((run, generation)),
                         )),
-                        json!({"run":run,"generation":generation,"outcome":if outcome.answer.is_some(){"answer_ready"}else{"no_new_answer"},"answer_outcome":outcome.answer.as_ref().and_then(|a|a["status"].as_str())}),
+                        json!({"run":run,"generation":generation,"question_type":outcome.observation["question_type"],"outcome":if outcome.answer.is_some(){"answer_ready"}else{"no_new_answer"},"answer_outcome":outcome.answer.as_ref().and_then(|a|a["status"].as_str())}),
                     );
                     if outcome.answer.is_some() {
                         last = Some(outcome.fingerprint);
@@ -1088,6 +1244,12 @@ async fn run_loop(
                         s.observation = Some(outcome.observation);
                         s.answer = outcome.answer;
                         s.message = outcome.message.into();
+                        if let Some(clock) = &s.clock {
+                            clock.published();
+                            if s.answer.is_none() {
+                                clock.finish("no_new_answer");
+                            }
+                        }
                     }) {
                         break;
                     }
@@ -1104,16 +1266,16 @@ async fn run_loop(
                         json!({"run":run,"generation":generation,"error_code":code,"error_category":diag::category(&code),"attempt":attempts}),
                     );
                     if terminal(&code) {
-                        state.stop_run(
-                            &app,
-                            run,
-                            false,
-                            "stopped",
-                            "Session or authorization changed. Monitoring stopped.",
-                        );
+                        if let Some(clock) = &candidate_clock {
+                            clock.finish("failed");
+                        }
+                        state.stop_run(&app, run, false, "stopped", session_message(&code));
                         break;
                     }
                     if failures >= 3 {
+                        if let Some(clock) = &candidate_clock {
+                            clock.finish("failed");
+                        }
                         state.stop_run(&app,run,true,"error","Repeated provider failures. Check configuration or connection, then Resume explicitly.");
                         break;
                     }
@@ -1144,7 +1306,13 @@ async fn run_loop(
             }
         }
         if stable && worker.is_none() && now >= next_request {
+            let mut fingerprint_timer = candidate_clock
+                .as_ref()
+                .map(|c| c.stage("frame_fingerprint"));
             let identity = FrameIdentity::of(&frame);
+            if let Some(timer) = &mut fingerprint_timer {
+                timer.finish("completed");
+            }
             if completed_frame.contains(identity) {
                 gate.sent();
                 diag::emit(
@@ -1175,6 +1343,10 @@ async fn run_loop(
                 break;
             }
             attempts += 1;
+            if let Some(clock) = &candidate_clock {
+                clock.candidate_capture(capture_started, sampled);
+                clock.dispatch(attempts, retry_pending);
+            }
             diag::emit(
                 "monitor_candidate_started",
                 "INFO",
@@ -1200,9 +1372,35 @@ async fn run_loop(
             let app_for_task = app.clone();
             let selected = selection.clone();
             let previous = last.clone();
+            let clock = candidate_clock.clone();
             let task = tauri::async_runtime::spawn(async move {
                 ready.await.map_err(|_| "request_cancelled".to_owned())?;
-                pipeline(app_for_task, selected, frame, previous, run, generation).await
+                let mut timer = clock.as_ref().map(|c| c.stage("candidate_pipeline"));
+                let result = pipeline(
+                    app_for_task,
+                    selected,
+                    frame,
+                    previous,
+                    run,
+                    generation,
+                    clock.clone(),
+                )
+                .await;
+                if let Some(timer) = &mut timer {
+                    timer.finish(if result.is_ok() {
+                        "completed"
+                    } else if result.as_ref().err().is_some_and(|code| {
+                        matches!(code.as_str(), "request_cancelled" | "capture_cancelled")
+                    }) {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    });
+                }
+                if let Some(clock) = &clock {
+                    clock.worker_done();
+                }
+                result
             });
             {
                 let mut inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -1224,6 +1422,51 @@ async fn run_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancellation_before_wait_registration_is_not_lost() {
+        tauri::async_runtime::block_on(async {
+            let cancel = Cancellation::new();
+            cancel.cancel();
+            tokio::time::timeout(Duration::from_millis(100), cancel.cancelled())
+                .await
+                .unwrap();
+        });
+    }
+    #[test]
+    fn diagnostic_ack_is_content_free_and_cannot_control_monitoring() {
+        let state = MonitorState::default();
+        let cancel = Arc::new(Cancellation::new());
+        {
+            let mut inner = state.0.lock().unwrap();
+            inner.run = 7;
+            inner.cancel = Some(cancel.clone());
+            inner.snapshot.phase = "answer_ready".into();
+            inner.snapshot.generation = 42;
+            inner.snapshot.answer = Some(json!({"private":"answer"}));
+            inner.snapshot.observation = Some(json!({"private":"question"}));
+        }
+        for generation in [41, 42] {
+            let reply = state
+                .acknowledge_performance("answer-panel", generation, 10, 2)
+                .unwrap();
+            assert!(reply.answer.is_none() && reply.observation.is_none() && reply.clock.is_none());
+            assert!(!serde_json::to_string(&reply).unwrap().contains("private"));
+        }
+        assert!(state.acknowledge_performance("main", 42, 10, 2).is_err());
+        assert!(state
+            .acknowledge_performance("answer-panel", 42, 300_001, 2)
+            .is_err());
+        assert!(state
+            .acknowledge_performance("answer-panel", 42, 10, 300_001)
+            .is_err());
+        let inner = state.0.lock().unwrap();
+        assert_eq!(inner.run, 7);
+        assert_eq!(inner.snapshot.phase, "answer_ready");
+        assert_eq!(inner.snapshot.generation, 42);
+        assert!(inner.snapshot.answer.is_some() && inner.snapshot.observation.is_some());
+        assert!(!cancel.stopped());
+        assert!(serde_json::from_value::<Operation>(json!({"kind":"performance_ready","generation":42,"receipt_to_ready_ms":10,"validation_ms":2,"action":"stop"})).is_err());
+    }
     #[test]
     fn starts_stopped_and_config_is_bounded() {
         assert_eq!(Snapshot::default().phase, "stopped");

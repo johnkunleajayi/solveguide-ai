@@ -13,6 +13,13 @@ class SessionRepository:
     def __init__(self, database):
         self.database = database
 
+    @asynccontextmanager
+    async def reading(self, owner):
+        # Request authentication already established the owner. Every lookup stays scoped.
+        # Only lifecycle mutations need the durable account-row serialization lock.
+        async with self.database.transaction(timeout_seconds=8) as db:
+            yield Transaction(db, owner, lock_documents=False)
+
     async def liveness(self, owner, identifier):
         statement = (
             select(
@@ -52,7 +59,7 @@ class SessionRepository:
             .where(LearningSession.owner_id == owner, LearningSession.id == identifier)
             .order_by(SessionDocument.ordinal)
         )
-        async with self.database.transaction() as db:
+        async with self.database.transaction(timeout_seconds=8) as db:
             rows = (await db.execute(statement)).mappings().all()
         if not rows:
             return None
@@ -87,8 +94,9 @@ class SessionRepository:
 
 
 class Transaction:
-    def __init__(self, db, owner):
+    def __init__(self, db, owner, lock_documents=True):
         self.db, self.owner = db, owner
+        self.lock_documents = lock_documents
 
     async def current(self, statuses):
         return await self.db.scalar(
@@ -99,9 +107,9 @@ class Transaction:
 
     async def get(self, identifier):
         return await self.db.scalar(
-            select(LearningSession).where(
-                LearningSession.owner_id == self.owner, LearningSession.id == identifier
-            )
+            select(LearningSession)
+            .where(LearningSession.owner_id == self.owner, LearningSession.id == identifier)
+            .execution_options(populate_existing=True)
         )
 
     async def links(self, row):
@@ -122,17 +130,12 @@ class Transaction:
             return []
         # Lock documents before accepting new references; concurrent deletion cannot
         # create a valid-looking preparation containing a pending-deletion document.
-        docs = list(
-            (
-                await self.db.execute(
-                    select(
-                        ContextDocument.id, ContextDocument.title, ContextDocument.extraction_status
-                    )
-                    .where(ContextDocument.owner_id == self.owner, ContextDocument.id.in_(ids))
-                    .with_for_update()
-                )
-            ).all()
-        )
+        statement = select(
+            ContextDocument.id, ContextDocument.title, ContextDocument.extraction_status
+        ).where(ContextDocument.owner_id == self.owner, ContextDocument.id.in_(ids))
+        if self.lock_documents:
+            statement = statement.with_for_update()
+        docs = list((await self.db.execute(statement)).all())
         indexes = list(
             (
                 await self.db.scalars(

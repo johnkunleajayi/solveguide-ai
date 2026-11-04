@@ -67,6 +67,25 @@ class MemorySession:
         )
 
     async def execute(self, statement):
+        if statement.is_select:
+            params = statement.compile().params
+            session = next(
+                (r for r in self.rows[AuthSession] if r.token_hash == params["token_hash_1"]), None
+            )
+            user = await self.get(User, session.user_id) if session else None
+            from types import SimpleNamespace
+
+            return SimpleNamespace(one_or_none=lambda: (session, user) if user else None)
+        if statement.is_update:
+            params = statement.compile().params
+            for row in self.rows[AuthSession]:
+                if (
+                    row.id == params["id_1"]
+                    and row.last_seen_at < params["last_seen_at_1"]
+                    and row.revoked_at is None
+                ):
+                    row.last_seen_at = params["last_seen_at"]
+            return None
         if statement.is_delete:
             self.rows[OAuthAttempt][:] = [
                 row for row in self.rows[OAuthAttempt] if row.expires_at >= now()
@@ -108,7 +127,7 @@ class MemoryDatabase:
         self.rollbacks = 0
 
     @asynccontextmanager
-    async def transaction(self):
+    async def transaction(self, **kwargs):
         snapshot = copy.deepcopy(self.rows)
         try:
             yield MemorySession(self.rows)

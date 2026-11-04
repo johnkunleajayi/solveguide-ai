@@ -87,3 +87,11 @@ test('floating monitor accepts Context Guided general-only attribution without a
  assert.equal(parsed.answer.grounding.citations.length,0)
  assert.throws(()=>types.parseMonitor({...active,mode:'materials_only',documentIds:['owned'],answer:{...raw,reasoning_mode:'materials_only'}}))
 })
+
+test('DEBUG performance metadata is strict and cannot replace generation or expose local timestamps',()=>{
+ const performance={traceId:'live-a-b-1',candidateId:'question-1-1',generation:1,observedToSnapshotMs:1234}
+ assert.equal(types.parseMonitor({...active,performance}).performance.observedToSnapshotMs,1234)
+ for(const invalid of [null,{}, {...performance,generation:2},{...performance,traceId:'private contents'}, {...performance,observedToSnapshotMs:-1},{...performance,secret:'hidden'}])assert.throws(()=>types.parseMonitor({...active,performance:invalid}))
+ assert.throws(()=>types.parseMonitor({...active,performance,localPerformance:{receivedAt:1,validationMs:0}}))
+ assert.throws(()=>types.parseMonitor({...initial,performance}))
+})

@@ -3,9 +3,12 @@ use super::{fingerprint, Result};
 use serde_json::Value;
 use std::future::Future;
 pub(super) trait Services: Sync {
-    fn session(&self) -> impl Future<Output = Result<()>> + Send;
+    fn session(&self, role: &'static str) -> impl Future<Output = Result<()>> + Send;
     fn vision(&self, payload: Value) -> impl Future<Output = Result<Value>> + Send;
     fn answer(&self, observation: Value) -> impl Future<Output = Result<Value>> + Send;
+    fn trace(&self) -> crate::diagnostics::Trace {
+        crate::diagnostics::Trace::local("synthetic-pipeline")
+    }
 }
 pub(super) struct Outcome {
     pub observation: Value,
@@ -18,8 +21,13 @@ pub(super) async fn execute(
     image: Value,
     last: Option<String>,
 ) -> Result<Outcome> {
-    services.session().await?;
+    services.session("pre_vision").await?;
     let observation = services.vision(image).await?;
+    let mut classification = crate::diagnostics::StageTimer::new(
+        services.trace(),
+        "observation_gate_dedup",
+        "neutral_validation",
+    );
     let signature = fingerprint(&observation);
     if observation["status"] != "detected"
         || observation["question_text"]
@@ -32,6 +40,8 @@ pub(super) async fn execute(
             || observation["visual_task"]["requested_output"] == "editing_prompt")
             && observation["visual_task"]["direction"] != "established")
     {
+        classification.finish("incomplete");
+        services.session("post_observation").await?;
         return Ok(Outcome {
             observation,
             answer: None,
@@ -40,6 +50,8 @@ pub(super) async fn execute(
         });
     }
     if last.as_ref() == Some(&signature) {
+        classification.finish("duplicate");
+        services.session("post_observation").await?;
         return Ok(Outcome {
             observation,
             answer: None,
@@ -47,9 +59,10 @@ pub(super) async fn execute(
             message: "Same question recognized. No additional answer request was sent.",
         });
     }
-    services.session().await?;
+    classification.finish("accepted");
+    // The session-bound backend answer performs fresh pre/post configuration and
+    // post-provider credential checks. Do not repeat them as separate HTTP calls.
     let answer = services.answer(observation.clone()).await?;
-    services.session().await?;
     Ok(Outcome {
         observation,
         answer: Some(answer),
@@ -77,7 +90,7 @@ mod tests {
         }
     }
     impl Services for Fake {
-        async fn session(&self) -> Result<()> {
+        async fn session(&self, _role: &'static str) -> Result<()> {
             let mut events = self.events.lock().unwrap();
             events.push("session");
             if self.failure == Some("initial")
@@ -102,6 +115,9 @@ mod tests {
             self.events.lock().unwrap().push("answer");
             if self.failure == Some("answer") {
                 Err("provider_timeout".into())
+            } else if self.failure == Some("ended") {
+                // Models the server's fresh post-provider session/revocation check.
+                Err("session_changed".into())
             } else {
                 Ok(json!({"status":"answered"}))
             }
@@ -126,7 +142,7 @@ mod tests {
                 .is_some());
             assert_eq!(
                 *f.events.lock().unwrap(),
-                vec!["session", "vision", "session", "answer", "session"]
+                vec!["session", "vision", "answer"]
             );
             for incomplete in [true, false] {
                 f.events.lock().unwrap().clear();
@@ -144,7 +160,7 @@ mod tests {
             assert!(execute(&f, json!({}), None).await.unwrap().answer.is_some());
             assert_eq!(
                 *f.events.lock().unwrap(),
-                vec!["session", "vision", "session", "answer", "session"]
+                vec!["session", "vision", "answer"]
             );
         });
     }

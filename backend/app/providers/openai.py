@@ -14,6 +14,8 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.errors import VisionError
 from app.images import ValidatedImage
+from app.performance import Timing
+from app.providers.client import lease
 from app.schemas import QuestionObservation
 
 OBSERVATION_INSTRUCTIONS = """
@@ -87,8 +89,9 @@ recommended options or transformation instructions in comparison facts.
 
 
 class OpenAIVisionProvider:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, clients=None):
         self.settings = settings
+        self.clients = clients
 
     async def observe(self, image: ValidatedImage) -> QuestionObservation:
         if not self.settings.provider_configured:
@@ -100,7 +103,9 @@ class OpenAIVisionProvider:
         try:
             # Explicit endpoint prevents an unrelated OPENAI_BASE_URL override redirecting images.
             async with (
-                AsyncOpenAI(
+                lease(
+                    self.clients,
+                    AsyncOpenAI,
                     api_key=self.settings.openai_api_key.get_secret_value(),
                     base_url="https://api.openai.com/v1",
                     timeout=httpx.Timeout(self.settings.vision_timeout_seconds, connect=5),
@@ -108,36 +113,43 @@ class OpenAIVisionProvider:
                 ) as client,
                 asyncio.timeout(self.settings.vision_timeout_seconds),
             ):
-                response = await client.responses.parse(
+                with Timing(
+                    "provider_sdk",
+                    provider="openai",
+                    role="vision",
                     model=self.settings.openai_vision_model,
-                    instructions=OBSERVATION_INSTRUCTIONS,
-                    input=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": "Observe this captured question. Do not answer it.",
-                                },
-                                {
-                                    "type": "input_image",
-                                    "detail": "high",
-                                    "image_url": f"data:image/png;base64,{image.data_base64}",
-                                },
-                            ],
-                        }
-                    ],
-                    text_format=QuestionObservation,
-                    max_output_tokens=self.settings.vision_max_output_tokens,
-                    store=False,
-                )
+                ):
+                    response = await client.responses.parse(
+                        model=self.settings.openai_vision_model,
+                        instructions=OBSERVATION_INSTRUCTIONS,
+                        input=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "Observe this captured question. Do not answer it.",
+                                    },
+                                    {
+                                        "type": "input_image",
+                                        "detail": "high",
+                                        "image_url": f"data:image/png;base64,{image.data_base64}",
+                                    },
+                                ],
+                            }
+                        ],
+                        text_format=QuestionObservation,
+                        max_output_tokens=self.settings.vision_max_output_tokens,
+                        store=False,
+                    )
             if response.status != "completed" or response.output_parsed is None:
                 raise VisionError(
                     "invalid_provider_response",
                     "The provider could not read this capture. Retake or retry.",
                 )
             # Revalidate independently of the SDK's parser, including semantic invariants.
-            return QuestionObservation.model_validate(response.output_parsed.model_dump())
+            with Timing("vision_validation"):
+                return QuestionObservation.model_validate(response.output_parsed.model_dump())
         except VisionError:
             raise
         except (APITimeoutError, TimeoutError):

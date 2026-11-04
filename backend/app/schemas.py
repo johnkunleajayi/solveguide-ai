@@ -1,4 +1,5 @@
 from typing import Annotated, Literal, Self
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -134,3 +135,16 @@ class QuestionObservation(StrictModel):
 class VisionRequest(StrictModel):
     media_type: Annotated[str, Field(min_length=1, max_length=64)]
     image_base64: Annotated[str, Field(min_length=1, repr=False)]
+    session_id: (
+        Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")]
+        | None
+    ) = None
+    session_revision: Annotated[int, Field(ge=1, le=2147483646)] | None = None
+
+    @model_validator(mode="after")
+    def session_pair(self) -> Self:
+        if (self.session_id is None) != (self.session_revision is None):
+            raise ValueError("Session ID and revision must be supplied together")
+        if self.session_id is not None:
+            self.session_id = str(UUID(self.session_id))
+        return self

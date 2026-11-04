@@ -616,16 +616,22 @@ pub(crate) async fn request_authenticated_traced(
         if let Some(candidate) = &trace.candidate_id {
             builder = builder.header("X-Solveguide-Candidate-ID", candidate);
         }
-        let response = builder
-            .send()
-            .await
-            .map_err(|e| error(diag::http_error(&e)))?;
+        let mut headers_timer =
+            diag::StageTimer::new(trace.clone(), "backend_response_headers", "transport");
+        let sent = builder.send().await;
+        headers_timer.finish(if sent.is_ok() { "completed" } else { "failed" });
+        let response = sent.map_err(|e| error(diag::http_error(&e)))?;
         let status = response.status();
         response_status = Some(status.as_u16());
-        let raw: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| error(diag::http_error(&e)))?;
+        let mut body_timer =
+            diag::StageTimer::new(trace.clone(), "backend_response_body_decode", "transport");
+        let decoded = response.json::<serde_json::Value>().await;
+        body_timer.finish(if decoded.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        });
+        let raw = decoded.map_err(|e| error(diag::http_error(&e)))?;
         if status.as_u16() == 401 {
             let mut credentials = state.credentials.lock().await;
             if credentials.token.as_deref() == Some(&token) {

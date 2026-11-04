@@ -4,6 +4,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import ALLOWED_ORIGINS, MAX_BODY_BYTES
+from app.request_lifetime import run_connected
 
 
 def error_response(code: str, message: str, status: int) -> JSONResponse:
@@ -98,13 +99,4 @@ class VisionRequestBoundary:
                     "request_timeout", "The image upload timed out. Please retry.", 408
                 )(scope, receive, no_store)
                 return
-            delivered = False
-
-            async def bounded_receive() -> Message:
-                nonlocal delivered
-                if not delivered:
-                    delivered = True
-                    return {"type": "http.request", "body": bytes(body), "more_body": False}
-                return await receive()
-
-            await self.app(scope, bounded_receive, no_store)
+            await run_connected(self.app, scope, receive, no_store, bytes(body))

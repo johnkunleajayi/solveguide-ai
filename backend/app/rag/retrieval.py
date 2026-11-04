@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from app.diagnostics import emit, span
+from app.performance import provider_scope
 from app.rag.schemas import Evidence
 
 STOP = set(
@@ -120,7 +121,8 @@ class Retriever:
             query_parts.extend(image.description for image in task.images)
             query_parts.extend(task.observed_changes)
         query = "\n".join(query_parts).encode()[:6000].decode("utf-8", errors="ignore")
-        vector = (await self.embedding.embed([query]))[0] if semantic else None
+        with provider_scope("query_embedding"):
+            vector = (await self.embedding.embed([query]))[0] if semantic else None
         method = "semantic_pgvector" if semantic else "lexical"
         terms = query if semantic else lexical_query(query)
         if not terms:

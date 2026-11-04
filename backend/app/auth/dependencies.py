@@ -5,7 +5,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
-from app.auth.service import current_session
+from app.auth.service import read_identity
 from app.database import PlatformError, get_db
 from app.diagnostics import emit, span
 
@@ -33,11 +33,10 @@ async def optional_current_user(request: Request) -> User | None:
             reason="no_credential",
         )
         return None
-    async with request.app.state.database.transaction() as db:
-        session = await current_session(db, token)
-        user = await db.get(User, session.user_id)
-        if user is None:
-            raise PlatformError("invalid_session", "Please sign in again.", 401)
+    if len(token) != 43:
+        raise PlatformError("invalid_session", "Please sign in again.", 401)
+    async with request.app.state.database.transaction(timeout_seconds=8) as db:
+        user = await read_identity(db, token)
         emit(
             "authentication_validation",
             level=logging.DEBUG,

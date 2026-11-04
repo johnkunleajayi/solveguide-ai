@@ -9,6 +9,7 @@ from app.auth.security import now
 from app.context_library.models import ContextDocument
 from app.context_library.service import ContextService
 from app.database import PlatformError
+from app.diagnostics import span
 from app.rag.models import DocumentChunk, DocumentIndex
 
 
@@ -153,6 +154,7 @@ class RagRepository:
             if row:
                 row.status, row.error_code = "failed", code
 
+    @span("reference_selection")
     async def selection(self, owner, identifiers):
         async with self.database.transaction() as db:
             documents = list(
@@ -190,6 +192,7 @@ class RagRepository:
                 "context_changed", "Selected materials changed. Refresh and retry.", 409
             )
 
+    @span("reference_ranking")
     async def rank(self, owner, identifiers, method, query, vector=None):
         if method == "semantic_pgvector":
             score = 1 - text_distance()

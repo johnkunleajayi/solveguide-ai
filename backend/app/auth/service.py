@@ -103,6 +103,41 @@ async def current_session(db: AsyncSession, token: str):
     return session
 
 
+async def read_identity(db: AsyncSession, token: str, *, touch=True):
+    """Fresh authorization read; no auth-row lock/cache or write on routine polling."""
+    if len(token) != 43:
+        raise PlatformError("invalid_session", "Please sign in again.", 401)
+    from sqlalchemy import update
+
+    row = (
+        await db.execute(
+            select(AuthSession, User)
+            .join(User, User.id == AuthSession.user_id)
+            .where(AuthSession.token_hash == digest(token))
+            .execution_options(populate_existing=True)
+        )
+    ).one_or_none()
+    if row is None:
+        raise PlatformError("invalid_session", "Please sign in again.", 401)
+    session, user = row
+    validate_session(session, token)
+    # last_seen is advisory activity metadata, never an authorization validity cache.
+    threshold = now() - timedelta(minutes=1)
+    if touch and session.last_seen_at < threshold:
+        await db.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.id == session.id,
+                AuthSession.last_seen_at < threshold,
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > now(),
+            )
+            .values(last_seen_at=now())
+            .execution_options(synchronize_session=False)
+        )
+    return user
+
+
 async def consume_attempt(db: AsyncSession, state: str, binding: str | None = None):
     attempt = await db.scalar(
         select(OAuthAttempt).where(OAuthAttempt.state_hash == digest(state)).with_for_update()

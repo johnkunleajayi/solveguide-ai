@@ -14,6 +14,8 @@ from openai import (
 
 from app.database import PlatformError
 from app.diagnostics import span
+from app.performance import Timing, provider_role
+from app.providers.client import lease
 
 
 class EmbeddingProvider(Protocol):
@@ -34,8 +36,9 @@ def validate_vectors(vectors, count, dimensions):
 
 
 class OpenAIEmbeddingProvider:
-    def __init__(self, settings):
+    def __init__(self, settings, clients=None):
         self.settings = settings
+        self.clients = clients
 
     @span("embedding_provider")
     async def embed(self, texts):
@@ -54,7 +57,9 @@ class OpenAIEmbeddingProvider:
             )
         try:
             async with (
-                AsyncOpenAI(
+                lease(
+                    self.clients,
+                    AsyncOpenAI,
                     api_key=s.openai_api_key.get_secret_value(),
                     base_url="https://api.openai.com/v1",
                     max_retries=0,
@@ -62,12 +67,18 @@ class OpenAIEmbeddingProvider:
                 ) as client,
                 asyncio.timeout(s.embedding_timeout_seconds),
             ):
-                response = await client.embeddings.create(
+                with Timing(
+                    "provider_sdk",
+                    provider="openai",
+                    role=provider_role.get() or "embedding",
                     model=s.openai_embedding_model,
-                    dimensions=s.embedding_dimensions,
-                    input=texts,
-                    encoding_format="float",
-                )
+                ):
+                    response = await client.embeddings.create(
+                        model=s.openai_embedding_model,
+                        dimensions=s.embedding_dimensions,
+                        input=texts,
+                        encoding_format="float",
+                    )
             rows = sorted(response.data, key=lambda row: row.index)
             if [row.index for row in rows] != list(range(len(texts))):
                 raise ValueError

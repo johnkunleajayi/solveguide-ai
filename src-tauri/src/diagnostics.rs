@@ -1,4 +1,5 @@
 //! Allowlisted terminal JSON only. Never stringify HTTP/OS/provider exceptions.
+mod reports;
 use serde_json::{json, Map, Value};
 use std::{
     io::Write,
@@ -54,7 +55,9 @@ pub fn category(code: &str) -> &'static str {
         "sign_in_required" | "invalid_session" | "session_expired" | "session_revoked" => {
             "authentication"
         }
-        "session_check_timeout" | "backend_timeout" => "network_timeout",
+        "session_check_timeout" | "session_validation_timeout" | "backend_timeout" => {
+            "network_timeout"
+        }
         "backend_connection_failed" => "network_connect",
         "backend_unavailable" => "network",
         "backend_http_error" => "backend_http",
@@ -142,11 +145,41 @@ fn record(event: &str, level: &str, trace: Option<&Trace>, fields: Value) -> Val
     if let Some(fields) = fields.as_object() {
         for (key, value) in fields {
             let safe = match key.as_str() {
-                "status" | "duration_ms" | "run" | "generation" | "attempt" | "deadline_ms"
-                | "retry_ms" => value.is_u64(),
+                "status"
+                | "duration_ms"
+                | "run"
+                | "generation"
+                | "attempt"
+                | "deadline_ms"
+                | "retry_ms"
+                | "start_offset_ms"
+                | "end_offset_ms"
+                | "capture_count"
+                | "capture_sum_ms"
+                | "capture_max_ms"
+                | "sample_gap_max_ms"
+                | "receipt_to_ready_ms"
+                | "validation_ms" => value.is_u64(),
                 "endpoint" => false,
                 "stage" | "outcome" | "reason" | "error_code" | "error_category" | "mode"
-                | "action" | "answer_outcome" => value.as_str().is_some_and(word),
+                | "action" | "answer_outcome" | "role" | "latency_category" => {
+                    value.as_str().is_some_and(word)
+                }
+                "question_type" => matches!(
+                    value.as_str(),
+                    Some(
+                        "multiple_choice"
+                            | "multiple_select"
+                            | "true_false"
+                            | "short_answer"
+                            | "essay"
+                            | "mathematics"
+                            | "code"
+                            | "mixed"
+                            | "unknown"
+                            | "visual_reasoning"
+                    )
+                ),
                 _ => false,
             };
             if safe {
@@ -160,17 +193,99 @@ fn record(event: &str, level: &str, trace: Option<&Trace>, fields: Value) -> Val
     }
     Value::Object(data)
 }
+pub fn performance_enabled() -> bool {
+    reports::mode() != reports::Mode::Normal
+}
+pub fn startup() {
+    if std::env::var("SOLVEGUIDE_DIAGNOSTIC_MODE")
+        .is_ok_and(|mode| !matches!(mode.as_str(), "NORMAL" | "PERFORMANCE" | "DEBUG"))
+    {
+        emit(
+            "diagnostic_configuration_invalid",
+            "WARNING",
+            None,
+            json!({"error_code":"invalid_diagnostic_mode"}),
+        );
+    }
+    let mode = match reports::mode() {
+        reports::Mode::Normal => "normal",
+        reports::Mode::Performance => "performance",
+        reports::Mode::Debug => "debug",
+    };
+    emit("application_started", "INFO", None, json!({"mode":mode}));
+}
+
+/// Observational only: dropped futures are cancelled, explicitly finished failures remain failures.
+pub struct StageTimer {
+    trace: Trace,
+    stage: &'static str,
+    role: &'static str,
+    started: Instant,
+    origin: Option<Instant>,
+    done: bool,
+    enabled: bool,
+}
+impl StageTimer {
+    pub fn new(trace: Trace, stage: &'static str, role: &'static str) -> Self {
+        Self {
+            trace,
+            stage,
+            role,
+            started: Instant::now(),
+            origin: None,
+            done: false,
+            enabled: performance_enabled(),
+        }
+    }
+    pub fn origin(mut self, origin: Instant) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+    pub fn finish(&mut self, outcome: &'static str) {
+        if self.done {
+            return;
+        }
+        self.done = true;
+        if self.enabled {
+            let end = Instant::now();
+            emit(
+                "performance_stage",
+                "DEBUG",
+                Some(&self.trace),
+                json!({
+                    "stage":self.stage,"role":self.role,"outcome":outcome,
+                "latency_category":if self.role=="transport" {"transport"} else if self.stage=="candidate_pipeline" {"total_container"} else {"application"},
+                    "duration_ms":end.duration_since(self.started).as_millis() as u64,
+                    "start_offset_ms":self.origin.map(|o| self.started.saturating_duration_since(o).as_millis() as u64),
+                    "end_offset_ms":self.origin.map(|o| end.saturating_duration_since(o).as_millis() as u64)
+                }),
+            );
+        }
+    }
+}
+impl Drop for StageTimer {
+    fn drop(&mut self) {
+        self.finish("cancelled");
+    }
+}
+#[cfg(test)]
 fn enabled(level: &str, configured: &str) -> bool {
     level != "DEBUG" || configured == "DEBUG"
 }
 pub fn emit(event: &str, level: &str, trace: Option<&Trace>, fields: Value) {
-    if !enabled(
-        level,
-        &std::env::var("SOLVEGUIDE_LOG_LEVEL").unwrap_or_else(|_| "INFO".into()),
-    ) {
+    let mode = reports::mode();
+    if mode == reports::Mode::Performance {
+        for report in reports::collect(event, trace, &fields) {
+            write_line(report);
+        }
+    }
+    if !reports::visible(mode, event, level) {
         return;
     }
-    let mut line = record(event, level, trace, fields).to_string();
+    write_line(record(event, level, trace, fields));
+}
+fn write_line(value: Value) {
+    let mut line = value.to_string();
     line.push('\n');
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
 }

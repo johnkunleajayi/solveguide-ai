@@ -2,7 +2,13 @@
 
 ## Enable diagnostics
 
-The normal application level is **INFO**. Set **SOLVEGUIDE_LOG_LEVEL=DEBUG** in
+Use **SOLVEGUIDE_DIAGNOSTIC_MODE=NORMAL|PERFORMANCE|DEBUG** (default NORMAL).
+PERFORMANCE collects timings silently and prints correlated summaries; DEBUG
+prints detailed troubleshooting events. See `MILESTONE_17_PHASE_2A_1.md` for mode
+precedence, report boundaries and terminal verification. Explicit mode overrides
+the legacy level. PERFORMANCE never enables global DEBUG.
+
+Set **SOLVEGUIDE_DIAGNOSTIC_MODE=DEBUG** in
 both PowerShell terminals before starting their processes. This controls only
 SolveGuide's allowlisted JSON diagnostics; it does not enable SDK, HTTP wire/body,
 SQL statement or global Rust debug logging. No logging dependencies were added.
@@ -12,7 +18,7 @@ canonical workspace, start the backend:
 
 ```powershell
 Set-Location D:\solveguide-ai
-$env:SOLVEGUIDE_LOG_LEVEL = 'DEBUG'
+$env:SOLVEGUIDE_DIAGNOSTIC_MODE = 'DEBUG'
 npm.cmd run backend
 ```
 
@@ -20,14 +26,15 @@ In a separate PowerShell terminal, start the desktop:
 
 ```powershell
 Set-Location D:\solveguide-ai
-$env:SOLVEGUIDE_LOG_LEVEL = 'DEBUG'
+$env:SOLVEGUIDE_DIAGNOSTIC_MODE = 'DEBUG'
 npm.cmd run desktop
 ```
 
-The backend also accepts SOLVEGUIDE_LOG_LEVEL=INFO or DEBUG in its ignored `.env`;
+The backend also accepts the explicit mode or legacy level in its ignored `.env`;
 the native process reads its environment, not the backend's file. Setting the variable
 in both terminals is the simplest troubleshooting workflow. To return to normal,
-set the value to INFO and restart both commands. Do not enable SDK/body tracing,
+set the explicit mode to NORMAL and restart both commands. With no explicit mode,
+legacy INFO resolves NORMAL and legacy DEBUG resolves DEBUG. Do not enable SDK/body tracing,
 SQL echo, Uvicorn access logs or blanket RUST_LOG=debug for this investigation.
 
 Logs appear in the respective PowerShell terminals (stderr), alongside ordinary

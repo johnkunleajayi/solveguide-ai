@@ -62,11 +62,15 @@ pub fn run() {
             privacy.initialize(&window);
             app.manage(privacy);
             window.show()?;
+            diagnostics::startup();
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("failed to build SolveGuide AI")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                diagnostics::emit("application_stopped", "INFO", None, serde_json::json!({}));
+            }
             if matches!(
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit

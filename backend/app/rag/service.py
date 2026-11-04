@@ -6,6 +6,7 @@ from app.answer.service import abstain, validate_recommendation
 from app.answer.visual import visual_limitation
 from app.database import PlatformError
 from app.diagnostics import emit, span
+from app.performance import provider_scope
 from app.rag.chunking import chunks, version
 from app.rag.embedding import validate_vectors
 from app.rag.retrieval import Retrieved, Retriever
@@ -207,11 +208,12 @@ class RagService:
         ids = [UUID(value) for value in request.document_ids]
         await self.repository.selection(owner, ids)
         await self.repository.validate(owner, retrieved.snapshots)
-        answer = (
-            await self.answer_service.recommend(request.observation, context=context)
-            if context is not None
-            else await self.answer_service.recommend(request.observation)
-        )
+        with provider_scope("answer_supplement"):
+            answer = (
+                await self.answer_service.recommend(request.observation, context=context)
+                if context is not None
+                else await self.answer_service.recommend(request.observation)
+            )
         await self.repository.selection(owner, ids)
         await self.repository.validate(owner, retrieved.snapshots)
         emit(

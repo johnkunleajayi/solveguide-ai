@@ -3,9 +3,12 @@ import { createMonitorController } from '../monitor/controller'
 import { monitorApi } from '../monitor/client'
 import { useTheme,type Theme } from '../hooks/useTheme'
 import { MonitorResult } from './MonitorResult'
+import { createReadyReporter } from '../monitor/performance'
 export function MonitorPanel(){
  const {setTheme}=useTheme();const [expanded,setExpanded]=useState(false)
  const [controller]=useState(()=>createMonitorController(monitorApi));const state=useSyncExternalStore(controller.subscribe,controller.getSnapshot);const snapshot=state.snapshot
+ const [reportReady]=useState(createReadyReporter)
+ useEffect(()=>{const operation=reportReady(snapshot,performance.now());if(operation)void monitorApi(operation).catch(()=>{})},[snapshot,reportReady])
  useEffect(()=>{controller.activate();void controller.refresh();const timer=setInterval(()=>{void controller.refresh()},500);return()=>{clearInterval(timer);controller.dispose()}},[controller])
  useEffect(()=>{const listener=(event:StorageEvent)=>{if(event.key==='solveguide-theme' && ['dark','light','system'].includes(event.newValue??''))setTheme(event.newValue as Theme)};window.addEventListener('storage',listener);return()=>window.removeEventListener('storage',listener)},[setTheme])
  const running=['monitoring','processing','answer_ready'].includes(snapshot.phase)

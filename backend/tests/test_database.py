@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -21,7 +22,7 @@ def test_pooler_rejecting_startup_options_still_gets_transaction_timeout(monkeyp
         assert url.drivername == "postgresql+psycopg"
         assert dict(url.query) == supplied_query
         assert kwargs["connect_args"]["connect_timeout"] == 5
-        return object()
+        return SimpleNamespace(sync_engine=object())
 
     class Session:
         @asynccontextmanager
@@ -46,6 +47,8 @@ def test_pooler_rejecting_startup_options_still_gets_transaction_timeout(monkeyp
 
     session = Session()
     monkeypatch.setattr("app.database.create_async_engine", pooler_engine)
+    listeners = []
+    monkeypatch.setattr("app.database.event.listen", lambda *args: listeners.append(args))
     monkeypatch.setattr("app.database.async_sessionmaker", lambda *a, **kw: session)
     database = Database(
         Settings(
@@ -54,6 +57,12 @@ def test_pooler_rejecting_startup_options_still_gets_transaction_timeout(monkeyp
             "?sslmode=verify-full&channel_binding=require",
         )
     )
+
+    assert [args[1] for args in listeners] == [
+        "before_cursor_execute",
+        "after_cursor_execute",
+        "handle_error",
+    ]
 
     async def run():
         async with database.transaction() as active:

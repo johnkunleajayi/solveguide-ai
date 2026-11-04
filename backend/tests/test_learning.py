@@ -80,6 +80,8 @@ class MemoryRepository:
                 self.rows, self.refs = saved
                 raise
 
+    reading = transaction
+
     def delete_document(self, identifier):
         self.docs.pop(identifier)
         for key in self.refs:
@@ -509,7 +511,7 @@ def test_liveness_is_one_owned_projection_without_lifecycle_locks():
         calls = []
 
         @asynccontextmanager
-        async def transaction(self):
+        async def transaction(self, **kwargs):
             yield self
 
         async def execute(self, statement):

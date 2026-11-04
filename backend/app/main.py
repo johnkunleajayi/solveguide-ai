@@ -28,11 +28,13 @@ from app.learning.repository import SessionRepository
 from app.learning.service import SessionService
 from app.middleware import VisionRequestBoundary, error_response
 from app.providers.base import VisionProvider
+from app.providers.client import ClientPool
 from app.providers.openai import OpenAIVisionProvider
 from app.rag.api import router as rag_router
 from app.rag.embedding import OpenAIEmbeddingProvider
 from app.rag.repository import RagRepository
 from app.rag.service import RagService
+from app.request_lifetime import SessionRequestBoundary
 from app.service import VisionService
 
 
@@ -46,13 +48,29 @@ def create_app(
             settings = Settings()
         except ValidationError:
             raise RuntimeError("Invalid backend configuration. Review backend/.env.") from None
-    configure(settings.solveguide_log_level)
+    configure(settings.solveguide_log_level, settings.solveguide_diagnostic_mode)
     database = Database(settings)
+    clients = ClientPool()
 
     @asynccontextmanager
     async def lifespan(app):
-        yield
-        await database.close()
+        from app.diagnostic_reports import resolve_mode
+        from app.diagnostics import emit
+
+        emit(
+            "application_started",
+            mode=resolve_mode(
+                settings.solveguide_diagnostic_mode, settings.solveguide_log_level
+            ).lower(),
+        )
+        try:
+            yield
+        finally:
+            try:
+                await clients.close()
+            finally:
+                await database.close()
+                emit("application_stopped")
 
     app = FastAPI(
         title="SolveGuide AI", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
@@ -64,16 +82,19 @@ def create_app(
     app.state.context_service = ContextService(
         database, LocalDocumentStorage(settings.context_storage_directory), settings
     )
-    app.state.vision_service = VisionService(provider or OpenAIVisionProvider(settings))
-    app.state.answer_service = AnswerService(answer_provider or OpenAIAnswerProvider(settings))
+    app.state.vision_service = VisionService(provider or OpenAIVisionProvider(settings, clients))
+    app.state.answer_service = AnswerService(
+        answer_provider or OpenAIAnswerProvider(settings, clients)
+    )
     app.state.rag_service = RagService(
         RagRepository(database),
-        OpenAIEmbeddingProvider(settings),
+        OpenAIEmbeddingProvider(settings, clients),
         app.state.answer_service,
         settings,
     )
     app.add_middleware(AuthBoundary)
     app.add_middleware(VisionRequestBoundary)
+    app.add_middleware(SessionRequestBoundary)
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=["127.0.0.1", "localhost", urlsplit(settings.auth_public_base_url).hostname],

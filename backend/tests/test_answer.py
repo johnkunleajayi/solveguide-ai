@@ -226,7 +226,8 @@ def test_answer_logging_does_not_contain_payloads(observation_data, answer_data,
         (),
         {"recommend": AsyncMock(return_value=AnswerRecommendation.model_validate(answer_data))},
     )()
-    with caplog.at_level("INFO", logger="solveguide.answer"):
+    # NORMAL intentionally hides successful request chatter. Check redaction at DEBUG.
+    with caplog.at_level("DEBUG", logger="solveguide.diagnostics"):
         assert client(provider).post("/api/v1/answer", json=observation_data).status_code == 200
     assert (
         observation_data["question_text"] not in caplog.text

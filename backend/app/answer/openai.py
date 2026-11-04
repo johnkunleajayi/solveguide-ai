@@ -19,14 +19,17 @@ from app.answer.schemas import AnswerRecommendation
 from app.answer.visual import compose_editing_response
 from app.config import Settings
 from app.diagnostics import emit, span
+from app.performance import Timing, provider_role
+from app.providers.client import lease
 from app.rag.prompt import GROUNDED_INSTRUCTIONS, VERIFY_INSTRUCTIONS
 from app.rag.schemas import GroundedDraft, GroundingCheck
 from app.schemas import QuestionObservation
 
 
 class OpenAIAnswerProvider:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, clients=None):
         self.settings = settings
+        self.clients = clients
 
     async def recommend(
         self, observation: QuestionObservation, context: LearningContext | None = None
@@ -34,7 +37,8 @@ class OpenAIAnswerProvider:
         result = await self._parse(
             ANSWER_INSTRUCTIONS, answer_input(observation, context), AnswerRecommendation
         )
-        return compose_editing_response(observation, result)
+        with Timing("answer_formatting"):
+            return compose_editing_response(observation, result)
 
     async def recommend_grounded(
         self, observation, mode, evidence, context: LearningContext | None = None
@@ -52,7 +56,8 @@ class OpenAIAnswerProvider:
                     GROUNDED_INSTRUCTIONS, json.dumps(payload, ensure_ascii=False), GroundedDraft
                 )
                 # Format before Materials Only's independent support check, never after it.
-                prepared = compose_editing_response(observation, draft.recommendation)
+                with Timing("answer_formatting"):
+                    prepared = compose_editing_response(observation, draft.recommendation)
                 if prepared != draft.recommendation:
                     draft.recommendation = prepared
                     draft.support = [s for s in draft.support if s.target != "key_point"]
@@ -104,7 +109,9 @@ class OpenAIAnswerProvider:
             )
         try:
             async with (
-                AsyncOpenAI(
+                lease(
+                    self.clients,
+                    AsyncOpenAI,
                     api_key=self.settings.openai_api_key.get_secret_value(),
                     base_url="https://api.openai.com/v1",
                     max_retries=0,
@@ -112,27 +119,41 @@ class OpenAIAnswerProvider:
                 ) as client,
                 asyncio.timeout(self.settings.answer_timeout_seconds),
             ):
-                response = await client.responses.parse(
+                with Timing(
+                    "provider_sdk",
+                    provider="openai",
+                    role=provider_role.get()
+                    or (
+                        "verification"
+                        if schema is GroundingCheck
+                        else "grounded_draft"
+                        if schema is GroundedDraft
+                        else "answer"
+                    ),
                     model=self.settings.openai_answer_model,
-                    instructions=instructions,
-                    input=[
-                        {
-                            "role": "user",
-                            "content": [{"type": "input_text", "text": task_input}],
-                        }
-                    ],
-                    text_format=schema,
-                    reasoning={"effort": self.settings.answer_reasoning_effort},
-                    max_output_tokens=self.settings.answer_max_output_tokens,
-                    store=False,
-                )
+                ):
+                    response = await client.responses.parse(
+                        model=self.settings.openai_answer_model,
+                        instructions=instructions,
+                        input=[
+                            {
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": task_input}],
+                            }
+                        ],
+                        text_format=schema,
+                        reasoning={"effort": self.settings.answer_reasoning_effort},
+                        max_output_tokens=self.settings.answer_max_output_tokens,
+                        store=False,
+                    )
             if response.status != "completed" or response.output_parsed is None:
                 raise AnswerError(
                     "invalid_answer_response",
                     "The provider did not return a complete recommendation. Please try again.",
                 )
             # Return only validated public output, never response reasoning items or metadata.
-            return schema.model_validate(response.output_parsed.model_dump())
+            with Timing("answer_validation"):
+                return schema.model_validate(response.output_parsed.model_dump())
         except AnswerError:
             raise
         except (APITimeoutError, TimeoutError):
