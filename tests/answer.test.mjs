@@ -113,3 +113,26 @@ test('uncertainty and abstention do not masquerade as definite answers', () => {
   const html = render({ ...result, status: 'insufficient_information', selected_options: [], answer_text: null, confidence: 0, warnings: ['The graph is missing.'] })
   assert.ok(html.includes('MORE INFORMATION NEEDED') && !html.includes('Recommended options') && !html.includes('Answer confidence ·'))
 })
+
+
+test('answer transport allows the native budget and preserves caller cancellation',async()=>{
+ const original=AbortSignal.timeout;let duration;let received
+ AbortSignal.timeout=ms=>{duration=ms;return new AbortController().signal}
+ try {
+  const {getSuggestedAnswer:request}=compile('answer/client.ts',{'./types':types,'../rag/client':{},'../api/core':{requestCore:async(_kind,_payload,signal)=>{received=signal;return {ok:true,data:result}}}})
+  const cancel=new AbortController();await request(observation,cancel.signal)
+  assert.equal(duration,215000);assert.equal(received.aborted,false)
+  cancel.abort();assert.equal(received.aborted,true)
+ } finally {AbortSignal.timeout=original}
+})
+
+
+test('five and ten direct answers reach the final display without slicing',()=>{
+ for(const count of [5,10]) {
+  const obs={...observation,question_type:'mixed',options:[],required_selection_count:null,question_text:Array.from({length:count},(_,i)=>`${i+1}. Explain this task.`).join('\n')}
+  const final={...result,question_type:'mixed',selected_options:[],answer_text:Array.from({length:count},(_,i)=>`Q${i+1}: I will standardize the visual identity and communication materials.`).join('\n')}
+  const html=render(final,obs)
+  for(let i=1;i<=count;i++)assert.match(html,new RegExp(`Q${i}: I will`))
+  assert.doesNotMatch(html,/You should explain|\[\[END/)
+ }
+})

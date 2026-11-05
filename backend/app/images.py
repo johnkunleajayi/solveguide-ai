@@ -8,7 +8,7 @@ from PIL import Image
 
 from app.config import MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS
 from app.errors import VisionError
-from app.schemas import VisionRequest
+from app.schemas import CaptureImage, VisionRequest
 
 
 @dataclass(frozen=True, repr=False)
@@ -16,9 +16,22 @@ class ValidatedImage:
     data_base64: str
     width: int
     height: int
+    additional: tuple["ValidatedImage", ...] = ()
 
 
 def validate_image(request: VisionRequest) -> ValidatedImage:
+    captures = [request, *request.additional_images]
+    encoded_limit = ((MAX_IMAGE_BYTES + 2) // 3) * 4
+    if sum(len(c.image_base64) for c in captures) > encoded_limit:
+        raise VisionError("image_too_large", "Combined captures exceed the 10 MiB limit.", 413)
+    images = tuple(_validate_capture(c) for c in captures)
+    if sum(i.width * i.height for i in images) > MAX_IMAGE_PIXELS:
+        raise VisionError("image_too_large", "Combined captures exceed 40 megapixels.", 413)
+    first = images[0]
+    return ValidatedImage(first.data_base64, first.width, first.height, images[1:])
+
+
+def _validate_capture(request: CaptureImage) -> ValidatedImage:
     if request.media_type != "image/png":
         raise VisionError("invalid_image_type", "Only PNG captures are supported.", 415)
     if len(request.image_base64) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:

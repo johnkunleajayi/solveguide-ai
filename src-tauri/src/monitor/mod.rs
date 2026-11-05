@@ -1,5 +1,6 @@
 //! Explicit, ephemeral native monitor. No database, credential IPC or capture history.
 mod filter;
+mod multi;
 mod panel;
 mod performance;
 mod pipeline;
@@ -67,6 +68,7 @@ pub struct Snapshot {
     message: String,
     panel_visible: bool,
     privacy_available: bool,
+    multi_capture: Option<multi::Status>,
     #[serde(skip)]
     clock: Option<Arc<performance::Candidate>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,6 +88,7 @@ impl Default for Snapshot {
             message: "Monitoring starts only when you explicitly activate it.".into(),
             panel_visible: false,
             privacy_available: true,
+            multi_capture: None,
             clock: None,
             performance: None,
         }
@@ -139,6 +142,8 @@ struct Inner {
     worker: Option<tokio::task::AbortHandle>,
     answer_action: Option<bool>, // true: explicit capture; false: dismissed/ready
     next_answer_context: Option<(String, Vec<String>)>,
+    multi: Option<multi::Collection>,
+    resume_detection: bool,
 }
 pub struct MonitorState(
     Mutex<Inner>,
@@ -183,6 +188,9 @@ impl MonitorState {
 
     fn answer_action(&self, capture: bool) -> Result<()> {
         let mut inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        inner.multi = None;
+        inner.snapshot.multi_capture = None;
+        inner.resume_detection = false;
         let running = inner.cancel.as_ref().is_some_and(|c| !c.stopped());
         inner.snapshot.generation += 1;
         if let Some(worker) = inner.worker.take() {
@@ -280,6 +288,9 @@ impl MonitorState {
         self.3.notify_waiters();
         inner.run += 1;
         inner.answer_action = None;
+        inner.multi = None;
+        inner.snapshot.multi_capture = None;
+        inner.resume_detection = false;
         if let Some(cancel) = inner.cancel.take() {
             cancel.cancel();
         }
@@ -322,6 +333,7 @@ impl MonitorState {
         if inner.run != run
             || inner.answer_action.is_some()
             || inner.snapshot.answer.is_some()
+            || inner.multi.is_some()
             || inner.snapshot.generation != (run << 32) + generation
             || inner.cancel.as_ref().is_none_or(|c| c.stopped())
         {
@@ -343,6 +355,8 @@ impl MonitorState {
         let mut inner = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if inner.run != run
             || inner.answer_action.is_some()
+            || inner.multi.is_some()
+            || inner.snapshot.answer.is_some()
             || inner.cancel.as_ref().is_none_or(|c| c.stopped())
         {
             return false;
@@ -367,6 +381,13 @@ pub enum Operation {
         revision: u32,
         config: Option<Config>,
     },
+    MultiStart {},
+    MultiAdd {},
+    MultiRemove {
+        index: usize,
+    },
+    MultiSolve {},
+    MultiCancel {},
     NewCapture {},
     Dismiss {},
     Pause {},
@@ -594,6 +615,11 @@ pub async fn monitor_control(
             )
             .await?;
         }
+        Operation::MultiStart {} => multi::start(&state)?,
+        Operation::MultiAdd {} => multi::add(&app).await?,
+        Operation::MultiRemove { index } => multi::remove(&state, index)?,
+        Operation::MultiSolve {} => multi::solve(&app).await?,
+        Operation::MultiCancel {} => multi::cancel(&state)?,
         Operation::NewCapture {} => {
             let restart = {
                 let inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -795,6 +821,8 @@ async fn begin_inner(app: &tauri::AppHandle, mut selection: Selection) -> Result
         inner.cancel = Some(cancel.clone());
         inner.selection = Some(selection.clone());
         inner.answer_action = None;
+        inner.multi = None;
+        inner.resume_detection = false;
         let retained = inner
             .snapshot
             .answer
@@ -1188,6 +1216,7 @@ async fn run_loop(
     let mut pending_result = None;
     let mut capture_ready = false;
     let mut explicit_capture = false;
+    let mut suppress_initial = false;
     loop {
         let monitor_state = app.state::<MonitorState>();
         let wake = tokio::select! {
@@ -1235,12 +1264,15 @@ async fn run_loop(
         let state = app.state::<MonitorState>();
         let action = {
             let mut inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
-            inner
-                .answer_action
-                .take()
-                .map(|capture| (capture, inner.snapshot.generation))
+            inner.answer_action.take().map(|capture| {
+                (
+                    capture,
+                    inner.snapshot.generation,
+                    std::mem::take(&mut inner.resume_detection),
+                )
+            })
         };
-        if let Some((capture, revision)) = action {
+        if let Some((capture, revision, resume_detection)) = action {
             if let Some(old) = worker.take() {
                 old.abort();
                 let _ = old.await;
@@ -1253,7 +1285,8 @@ async fn run_loop(
             gate = Gate::new();
             completed_frame = CompletedFrame::default();
             last = None;
-            capture_ready = !capture;
+            capture_ready = !capture && !resume_detection;
+            suppress_initial = resume_detection;
             explicit_capture = capture;
         }
         let now = started.elapsed().as_millis() as u64;
@@ -1296,6 +1329,15 @@ async fn run_loop(
         }
         // Retained answers and dismissed content never sample or dispatch AI work.
         // Authentication/session and source-liveness checks above remain active.
+        if state
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .multi
+            .is_some()
+        {
+            continue;
+        }
         if capture_ready
             || state
                 .0
@@ -1341,6 +1383,12 @@ async fn run_loop(
             .unwrap_or_else(|p| p.into_inner())
             .answer_action
             .is_some()
+            || state
+                .0
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .multi
+                .is_some()
         {
             continue; // An explicit action superseded this sample/result.
         }
@@ -1388,6 +1436,11 @@ async fn run_loop(
             }) {
                 continue;
             }
+        }
+        if suppress_initial {
+            gate.sent();
+            suppress_initial = false;
+            continue;
         }
         if let Some(clock) = &candidate_clock {
             clock.capture(capture_duration, sample_gap);
@@ -1598,6 +1651,8 @@ async fn run_loop(
                 let mut inner = state.0.lock().unwrap_or_else(|p| p.into_inner());
                 if inner.run == run
                     && inner.answer_action.is_none()
+                    && inner.multi.is_none()
+                    && inner.snapshot.answer.is_none()
                     && inner.snapshot.generation == (run << 32) + generation
                     && !cancel.stopped()
                 {

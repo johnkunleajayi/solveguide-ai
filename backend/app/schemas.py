@@ -132,9 +132,15 @@ class QuestionObservation(StrictModel):
         return self
 
 
-class VisionRequest(StrictModel):
+class CaptureImage(StrictModel):
     media_type: Annotated[str, Field(min_length=1, max_length=64)]
     image_base64: Annotated[str, Field(min_length=1, repr=False)]
+
+
+class VisionRequest(CaptureImage):
+    additional_images: Annotated[list[CaptureImage], Field(max_length=4, repr=False)] = Field(
+        default_factory=list
+    )
     session_id: (
         Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")]
         | None

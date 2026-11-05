@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     vision_max_output_tokens: int = Field(default=4096, ge=512, le=8192)
 
     openai_answer_model: str = Field(default="gpt-5.4", min_length=1, max_length=100)
-    answer_timeout_seconds: float = Field(default=60, ge=1, le=90)
+    answer_timeout_seconds: float = Field(default=120, ge=1, le=180)
     answer_max_output_tokens: int = Field(default=6000, ge=1024, le=12000)
     answer_reasoning_effort: Literal["none", "low", "medium", "high"] = "medium"
     openai_embedding_model: str = Field(

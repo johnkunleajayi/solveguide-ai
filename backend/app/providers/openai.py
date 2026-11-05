@@ -88,6 +88,31 @@ recommended options or transformation instructions in comparison facts.
 """.strip()
 
 
+def observation_content(image: ValidatedImage) -> list[dict]:
+    captures = (image, *image.additional)
+    text = "Observe this captured question. Do not answer it."
+    if image.additional:
+        text = (
+            "Observe these ordered captures as ONE question. They may overlap or show "
+            "different scroll positions. Combine visible instructions, images and options; "
+            "do not count overlapping content twice or invent hidden details. Capture order "
+            "is not an original/edited direction unless visible labels establish it. "
+            "Return one combined observation, not separate questions. Do not answer it."
+        )
+    content = [{"type": "input_text", "text": text}]
+    for index, capture in enumerate(captures, 1):
+        if image.additional:
+            content.append({"type": "input_text", "text": f"Capture {index} of {len(captures)}"})
+        content.append(
+            {
+                "type": "input_image",
+                "detail": "high",
+                "image_url": f"data:image/png;base64,{capture.data_base64}",
+            }
+        )
+    return content
+
+
 class OpenAIVisionProvider:
     def __init__(self, settings: Settings, clients=None):
         self.settings = settings
@@ -125,17 +150,7 @@ class OpenAIVisionProvider:
                         input=[
                             {
                                 "role": "user",
-                                "content": [
-                                    {
-                                        "type": "input_text",
-                                        "text": "Observe this captured question. Do not answer it.",
-                                    },
-                                    {
-                                        "type": "input_image",
-                                        "detail": "high",
-                                        "image_url": f"data:image/png;base64,{image.data_base64}",
-                                    },
-                                ],
+                                "content": observation_content(image),
                             }
                         ],
                         text_format=QuestionObservation,

@@ -349,3 +349,81 @@ def test_sdk_invalid_results_fail_closed(monkeypatch, observation_data, answer_d
     install_mock(monkeypatch, lambda request, calls: httpx.Response(200, json=body))
     with pytest.raises(AnswerError, match="invalid_answer_response"):
         recommend(observation_data)
+
+
+def test_answer_timeout_configuration_is_bounded(monkeypatch):
+    monkeypatch.delenv("ANSWER_TIMEOUT_SECONDS", raising=False)
+    assert Settings(_env_file=None).answer_timeout_seconds == 120
+    assert Settings(_env_file=None, answer_timeout_seconds=180).answer_timeout_seconds == 180
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, answer_timeout_seconds=181)
+
+
+@pytest.mark.parametrize("outcome", ["completed", "timeout", "cancelled"])
+def test_answer_deadline_and_cancellation_without_retry(
+    monkeypatch, observation_data, answer_data, outcome
+):
+    from types import SimpleNamespace
+
+    calls = []
+    closed = []
+    budget = 0.1 if outcome == "completed" else 0.01
+    entered = None
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs["max_retries"] == 0
+            assert kwargs["timeout"].read == budget
+            assert kwargs["timeout"].connect == 5
+            self.responses = self
+            self.with_raw_response = self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            closed.append(True)
+
+        async def parse(self, **kwargs):
+            calls.append(True)
+            entered.set()
+            await asyncio.sleep(0.001 if outcome == "completed" else 60)
+
+            def parsed():
+                return SimpleNamespace(
+                    status="completed",
+                    output_parsed=AnswerRecommendation.model_validate(answer_data),
+                )
+
+            return SimpleNamespace(
+                http_response=SimpleNamespace(json=lambda: {"status": "completed"}), parse=parsed
+            )
+
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", Client)
+    settings = Settings(_env_file=None, openai_api_key="test-only").model_copy(
+        update={"answer_timeout_seconds": budget}
+    )
+
+    async def run():
+        nonlocal entered
+        entered = asyncio.Event()
+        task = asyncio.create_task(
+            provider_module.OpenAIAnswerProvider(settings).recommend(
+                QuestionObservation.model_validate(observation_data)
+            )
+        )
+        await entered.wait()
+        if outcome == "cancelled":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        elif outcome == "timeout":
+            with pytest.raises(AnswerError) as caught:
+                await task
+            assert caught.value.code == "answer_timeout"
+            assert caught.value.status == 504
+        else:
+            assert (await task).status == "answered"
+
+    asyncio.run(run())
+    assert len(calls) == 1 and closed == [True]

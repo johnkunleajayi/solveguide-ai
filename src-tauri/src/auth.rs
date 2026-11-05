@@ -481,6 +481,13 @@ pub enum AiKind {
     Answer,
 }
 impl AiKind {
+    fn timeout(self) -> Duration {
+        match self {
+            Self::Vision => Duration::from_secs(105),
+            // Backend answer budget is bounded at 180s; allow auth/DB/transport headroom.
+            Self::Answer => Duration::from_secs(210),
+        }
+    }
     fn path(self) -> &'static str {
         match self {
             Self::Vision => "/api/v1/vision/question",
@@ -611,7 +618,7 @@ pub(crate) async fn request_authenticated_traced(
             .header("X-Request-ID", &trace.request_id)
             .header("X-Solveguide-Trace-ID", &trace.trace_id)
             .bearer_auth(&token)
-            .timeout(Duration::from_secs(105))
+            .timeout(kind.timeout())
             .json(&payload);
         if let Some(candidate) = &trace.candidate_id {
             builder = builder.header("X-Solveguide-Candidate-ID", candidate);
@@ -725,6 +732,8 @@ mod tests {
     }
     #[test]
     fn ai_transport_limits_and_image_boundary_are_fixed() {
+        assert_eq!(AiKind::Vision.timeout(), Duration::from_secs(105));
+        assert_eq!(AiKind::Answer.timeout(), Duration::from_secs(210));
         assert_eq!(AiKind::Vision.path(), "/api/v1/vision/question");
         assert_eq!(AiKind::Answer.path(), "/api/v1/answer");
         assert!(validate_ai(

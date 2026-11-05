@@ -17,6 +17,8 @@ const messages: Record<string, string> = {
 
   answer_not_configured: 'Set OPENAI_API_KEY in backend/.env, then restart the backend.',
   answer_authentication: 'The answer provider rejected the credentials. Review backend configuration.',
+  answer_truncated: 'The provider reached its output limit. Retry explicitly with fewer questions.',
+  incomplete_assessment: 'The response omitted a question. Retry explicitly with fewer questions.',
   answer_timeout: 'The suggested answer timed out. Please try again.',
   answer_unavailable: 'The backend could not reach the answer provider. Please try again.',
   answer_rate_limited: 'The answer provider is busy or its quota is unavailable. Try again later.',
@@ -28,7 +30,7 @@ const messages: Record<string, string> = {
   request_too_large: 'The observation is too large. Retake a more focused question.',
 }
 export async function getSuggestedAnswer(observation: QuestionObservation, signal: AbortSignal, options?: ReasoningOptions) {
-  const timeout = AbortSignal.timeout(110_000)
+  const timeout = AbortSignal.timeout(215_000) // Native answer transport: 210s; backend budget: at most 180s.
   try {
     const grounded = options && options.mode !== 'general'
     const response = await requestCore('answer', options?.session ? {observation,session_id:options.session.id,session_revision:options.session.revision} : grounded ? { observation, ...options } : observation, AbortSignal.any([signal, timeout]))

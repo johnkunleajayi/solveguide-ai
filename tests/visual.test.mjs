@@ -127,6 +127,6 @@ test('comparison facts are inspectable and attempt numbers do not claim unique q
   const obs = parseObservation({ ...observation, visual_task: { ...observation.visual_task, comparisons } })
   const { MonitorResult } = compile('components/MonitorResult.tsx', { './AnswerRecommendationView': view })
   const html = render(React.createElement(MonitorResult, { snapshot: { mode: 'general', questionNumber: 5, generation: 7, observation: obs, answer } }))
-  assert.match(html, /Processing attempt 5/); assert.match(html, /Observed comparison facts/); assert.match(html, /Second chart bar/); assert.match(html, /unchanged/)
+  assert.doesNotMatch(html, /Processing attempt|Generation/); assert.match(html, /Observed comparison facts/); assert.match(html, /Second chart bar/); assert.match(html, /unchanged/)
   assert.throws(() => parseObservation({ ...obs, visual_task: { ...obs.visual_task, comparisons: [...comparisons, comparisons[0]] } }))
 })

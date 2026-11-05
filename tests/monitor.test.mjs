@@ -123,7 +123,7 @@ test('transient snapshot transport failure retains the displayed answer',async()
 test('floating panel exposes separate New Capture, Dismiss and Hide panel controls',()=>{
  const calls=[];const c=createMonitorController(async op=>{calls.push(op);return active})
  const hooks={...React,useEffect:noop,useState:fn=>[typeof fn==='function'?fn():fn,noop],useSyncExternalStore:()=>({snapshot:active,error:null})}
- const {MonitorPanel}=compile('components/MonitorPanel.tsx',{'react':hooks,'../monitor/controller':{createMonitorController:()=>c},'../monitor/client':{monitorApi:noop},'../hooks/useTheme':{useTheme:()=>({setTheme:noop})},'./MonitorResult':{MonitorResult:()=>null},'../monitor/performance':{createReadyReporter:()=>noop}})
+ const {MonitorPanel}=compile('components/MonitorPanel.tsx',{'react':hooks,'../monitor/controller':{createMonitorController:()=>c},'../monitor/client':{monitorApi:noop},'../hooks/useTheme':{useTheme:()=>({setTheme:noop})},'./MonitorResult':{MonitorResult:()=>null},'./MultiCaptureControls':compile('components/MultiCaptureControls.tsx'),'../monitor/performance':{createReadyReporter:()=>noop}})
  const html=render(React.createElement(MonitorPanel));assert.match(html,/>New Capture</);assert.match(html,/>Dismiss</);assert.match(html,/>Hide panel</)
  assert.equal(calls.length,0)
 })
@@ -157,4 +157,55 @@ test('Dismiss and New Capture can clear retained stopped solutions and reject ol
   action.resolve({...initial,phase:kind==='dismiss'?'stopped':'monitoring'});await clearing
   assert.equal(c.getSnapshot().snapshot.answer,null)
  }
+})
+
+
+test('multi-capture controls enforce 2-5 captures and expose ordered removal',()=>{
+ const {MultiCaptureControls}=compile('components/MultiCaptureControls.tsx')
+ const calls=[];const props={enabled:true,busy:false,onCommand:op=>calls.push(op)}
+ const buttons=node=>{if(!node || typeof node!=='object')return [];return [...(node.type==='button'?[node]:[]),...React.Children.toArray(node.props?.children).flatMap(buttons)]}
+ const start=MultiCaptureControls({...props,status:null});start.props.onClick();assert.equal(calls[0].kind,'multi_start')
+ const collecting=MultiCaptureControls({...props,status:{count:2,adding:false,solving:false}})
+ const html=render(collecting);assert.match(html,/2 \/ 5 captures/);assert.match(html,/Automatic detection is suspended/)
+ const controls=buttons(collecting)
+ controls.find(b=>b.props['aria-label']==='Remove capture 2').props.onClick()
+ controls.find(b=>b.props.children==='Add Capture').props.onClick()
+ controls.find(b=>b.props.children==='Solve').props.onClick()
+ controls.find(b=>b.props.children==='Cancel').props.onClick()
+ assert.deepEqual(calls.slice(1),[{kind:'multi_remove',index:1},{kind:'multi_add'},{kind:'multi_solve'},{kind:'multi_cancel'}])
+ for(const count of [0,1])assert.equal(buttons(MultiCaptureControls({...props,status:{count,adding:false,solving:false}})).find(b=>b.props.children==='Solve').props.disabled,true)
+ assert.equal(buttons(MultiCaptureControls({...props,status:{count:5,adding:false,solving:false}})).find(b=>b.props.children==='Add Capture').props.disabled,true)
+ const solving=buttons(MultiCaptureControls({...props,busy:true,status:{count:2,adding:false,solving:true}}))
+ assert.equal(solving.find(b=>b.props.children==='Cancel').props.disabled,undefined)
+})
+
+test('multi-capture status cannot expose images or exceed native bounds',()=>{
+ assert.equal(types.parseMonitor({...initial,multiCapture:{count:2,adding:false,solving:true}}).multiCapture.count,2)
+ for(const multiCapture of [{count:6,adding:false,solving:false},{count:1,adding:false,solving:true},{count:2,adding:false,solving:false,images:['private']}])assert.throws(()=>types.parseMonitor({...initial,multiCapture}))
+})
+
+test('Cancel, Pause and Stop supersede a pending multi-capture solve',async()=>{
+ for(const kind of ['multi_cancel','pause','stop']) {
+  const late=deferred();const c=createMonitorController(op=>op.kind==='multi_solve'?late.promise:Promise.resolve(initial))
+  const solving=c.command({kind:'multi_solve'});assert.equal(c.getSnapshot().snapshot.answer,null)
+  await c.command({kind});late.resolve(active);assert.equal(await solving,false)
+  assert.equal(c.getSnapshot().snapshot.answer,null);assert.equal(c.getSnapshot().snapshot.multiCapture,null)
+ }
+})
+
+
+test('question identity uses observed titles and never exposes run identifiers',()=>{
+ const view=compile('components/AnswerRecommendationView.tsx')
+ const {MonitorResult,describeQuestion}=compile('components/MonitorResult.tsx',{'./AnswerRecommendationView':view})
+ const obs={...observation,question_type:'visual_reasoning',question_text:'Corporate Presentation Redesign Challenge\n'+Array.from({length:5},(_,i)=>`Question ${i+1}: Describe the visible change.`).join('\n')}
+ const identity=describeQuestion(obs)
+ assert.equal(identity.title,'Corporate Presentation Redesign Challenge')
+ assert.equal(identity.description,'Visual Assessment · 5 Questions')
+ const html=render(React.createElement(MonitorResult,{snapshot:{...active,observation:obs,answer:null,generation:73014444035}}))
+ assert.match(html,/Corporate Presentation Redesign Challenge/)
+ assert.doesNotMatch(html,/Processing attempt|Generation|73014444035/)
+ assert.equal(describeQuestion({...observation,question_type:'code',question_text:'',visible_context:['Title: Python Coding Challenge — Longest Unique Substring']}).title,'Python Coding Challenge — Longest Unique Substring')
+ assert.equal(describeQuestion({...observation,question_type:'visual_reasoning',question_text:null}).title,'Visual Question')
+ assert.equal(describeQuestion({...observation,question_type:'code',question_text:null}).title,'Coding Challenge')
+ assert.equal(describeQuestion({...obs,question_text:'Question 1: New assessment',visible_context:['Page title: Executive Dashboard Analysis']}).title,'Executive Dashboard Analysis')
 })

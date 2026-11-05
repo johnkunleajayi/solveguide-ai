@@ -12,6 +12,7 @@ from openai import (
 )
 from pydantic import ValidationError
 
+from app.answer.assessment import require_coverage, response_plan
 from app.answer.context import LearningContext
 from app.answer.errors import AnswerError
 from app.answer.prompt import ANSWER_INSTRUCTIONS, answer_input
@@ -35,10 +36,14 @@ class OpenAIAnswerProvider:
         self, observation: QuestionObservation, context: LearningContext | None = None
     ) -> AnswerRecommendation:
         result = await self._parse(
-            ANSWER_INSTRUCTIONS, answer_input(observation, context), AnswerRecommendation
+            ANSWER_INSTRUCTIONS + "\n" + response_plan(observation),
+            answer_input(observation, context),
+            AnswerRecommendation,
         )
         with Timing("answer_formatting"):
-            return compose_editing_response(observation, result)
+            result = compose_editing_response(observation, result)
+            require_coverage(observation, result)
+            return result
 
     async def recommend_grounded(
         self, observation, mode, evidence, context: LearningContext | None = None
@@ -53,7 +58,9 @@ class OpenAIAnswerProvider:
         try:
             async with asyncio.timeout(self.settings.answer_timeout_seconds):
                 draft = await self._parse(
-                    GROUNDED_INSTRUCTIONS, json.dumps(payload, ensure_ascii=False), GroundedDraft
+                    GROUNDED_INSTRUCTIONS + "\n" + response_plan(observation),
+                    json.dumps(payload, ensure_ascii=False),
+                    GroundedDraft,
                 )
                 # Format before Materials Only's independent support check, never after it.
                 with Timing("answer_formatting"):
@@ -61,6 +68,7 @@ class OpenAIAnswerProvider:
                 if prepared != draft.recommendation:
                     draft.recommendation = prepared
                     draft.support = [s for s in draft.support if s.target != "key_point"]
+                require_coverage(observation, draft.recommendation)
                 if (
                     mode == "materials_only"
                     and draft.sufficient_evidence
@@ -132,7 +140,7 @@ class OpenAIAnswerProvider:
                     ),
                     model=self.settings.openai_answer_model,
                 ):
-                    response = await client.responses.parse(
+                    raw = await client.responses.with_raw_response.parse(
                         model=self.settings.openai_answer_model,
                         instructions=instructions,
                         input=[
@@ -146,6 +154,22 @@ class OpenAIAnswerProvider:
                         max_output_tokens=self.settings.answer_max_output_tokens,
                         store=False,
                     )
+                # Inspect completion metadata BEFORE the SDK parses potentially cut-off JSON.
+                # This is the same HTTP response, not an additional provider request.
+                metadata = raw.http_response.json()
+                if (metadata.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
+                    raise AnswerError(
+                        "answer_truncated",
+                        "The provider reached its output limit before completing the answer. "
+                        "Retry explicitly with fewer questions.",
+                        502,
+                    )
+                if metadata.get("status") != "completed":
+                    raise AnswerError(
+                        "invalid_answer_response",
+                        "The provider did not complete the response. Please retry explicitly.",
+                    )
+                response = raw.parse()
             if response.status != "completed" or response.output_parsed is None:
                 raise AnswerError(
                     "invalid_answer_response",
