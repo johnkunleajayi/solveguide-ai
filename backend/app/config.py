@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 from typing import Literal
 
@@ -5,6 +7,20 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def runtime_paths() -> tuple[Path | None, Path]:
+    if getattr(sys, "frozen", False):
+        # Installed resources are read-only; never load a bundled/adjacent private .env.
+        local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        config = None
+        if "--personal-desktop" in sys.argv and "--managed" in sys.argv:
+            config = local / "SolveGuide AI Personal" / "settings.env"
+        return config, local / "SolveGuide AI" / "backend" / "context-library"
+    return BACKEND_ROOT / ".env", BACKEND_ROOT.parent / ".cache" / "context-library"
+
+
+DEFAULT_ENV_FILE, DEFAULT_CONTEXT_STORAGE = runtime_paths()
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_BODY_BYTES = 14 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
@@ -13,7 +29,7 @@ ALLOWED_ORIGINS = ("http://127.0.0.1:1420", "http://tauri.localhost")
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=BACKEND_ROOT / ".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=DEFAULT_ENV_FILE, env_file_encoding="utf-8", extra="ignore"
     )
     solveguide_log_level: Literal["INFO", "DEBUG"] = "INFO"
     solveguide_diagnostic_mode: Literal["NORMAL", "PERFORMANCE", "DEBUG"] | None = None
@@ -49,7 +65,7 @@ class Settings(BaseSettings):
     context_max_pages: int = Field(default=200, ge=1, le=500)
     context_max_blocks: int = Field(default=5000, ge=200, le=10000)
     context_expanded_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
-    context_storage_directory: Path = BACKEND_ROOT.parent / ".cache" / "context-library"
+    context_storage_directory: Path = DEFAULT_CONTEXT_STORAGE
 
     @model_validator(mode="after")
     def platform_configuration(self):

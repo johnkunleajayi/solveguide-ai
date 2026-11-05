@@ -27,5 +27,7 @@ try {
 if (-not $toolchainReady) {
   throw 'Rust setup is incomplete. Run npm.cmd run setup:rust from D:\solveguide-ai, then retry.'
 }
+# Preserve the existing separately launched development backend. Opt in with managed.
+if (-not $env:SOLVEGUIDE_BACKEND_MODE) { $env:SOLVEGUIDE_BACKEND_MODE = 'external' }
 if ($Check) { cargo check --manifest-path src-tauri/Cargo.toml } else { npm.cmd run tauri -- dev }
 exit $LASTEXITCODE

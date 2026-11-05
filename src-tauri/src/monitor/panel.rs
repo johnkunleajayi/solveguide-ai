@@ -5,9 +5,7 @@ pub(super) fn show(app: &tauri::AppHandle, focus: bool) -> Result<()> {
     let window = if let Some(window) = app.get_webview_window("answer-panel") {
         window
     } else {
-        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .ok_or("panel_unavailable")?;
+        let runtime = crate::backend::runtime_dir(app)?;
         let window = WebviewWindowBuilder::new(
             app,
             "answer-panel",
@@ -21,7 +19,7 @@ pub(super) fn show(app: &tauri::AppHandle, focus: bool) -> Result<()> {
         .always_on_top(true)
         .skip_taskbar(false)
         .maximizable(false)
-        .data_directory(workspace.join(".cache").join("webview"))
+        .data_directory(runtime.join("webview"))
         .on_navigation(|url| {
             matches!(url.path(), "/" | "/index.html")
                 && (url.scheme() == "tauri" && url.host_str() == Some("localhost")

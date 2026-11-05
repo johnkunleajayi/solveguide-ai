@@ -10,7 +10,6 @@ use std::{
 use tauri::Manager;
 use tokio::sync::Mutex;
 
-const BASE: &str = "http://127.0.0.1:8000/api/v1/auth";
 const ORIGIN: &str = "http://tauri.localhost";
 
 #[derive(Default)]
@@ -20,6 +19,7 @@ struct Credentials {
 }
 
 pub struct AuthState {
+    endpoint: crate::backend::Endpoint,
     credentials: Mutex<Credentials>,
     client: reqwest::Client,
     epoch: AtomicU64,
@@ -28,18 +28,34 @@ pub struct AuthState {
 
 impl Default for AuthState {
     fn default() -> Self {
-        Self {
+        Self::with_backend(crate::backend::Endpoint::external())
+            .expect("local authentication client")
+    }
+}
+impl AuthState {
+    pub(crate) fn with_backend(
+        endpoint: crate::backend::Endpoint,
+    ) -> std::result::Result<Self, String> {
+        let headers = endpoint.headers()?;
+        Ok(Self {
+            endpoint,
             credentials: Mutex::new(Credentials::default()),
             epoch: AtomicU64::new(0),
             pending_ai: StdMutex::new(None),
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
+                .default_headers(headers)
                 .connect_timeout(Duration::from_secs(3))
                 .timeout(Duration::from_secs(12))
                 .build()
-                .expect("local authentication HTTP client"),
-        }
+                .map_err(|_| "backend_client_failed")?,
+        })
+    }
+    fn url(&self, suffix: &str) -> Result<String> {
+        self.endpoint
+            .url(suffix)
+            .map_err(|_| error("backend_unavailable"))
     }
 }
 
@@ -138,7 +154,7 @@ impl AuthState {
             .client
             .request(
                 request.method,
-                format!("http://127.0.0.1:8000/api/v1/{area}{}", request.suffix),
+                self.url(&format!("/api/v1/{area}{}", request.suffix))?,
             )
             .header("Origin", ORIGIN)
             .header("X-Request-ID", &trace.request_id)
@@ -166,6 +182,9 @@ impl AuthState {
             diagnostic.finish(None, Some(code));
             error(code)
         })?;
+        if !self.endpoint.accepts(&response) {
+            return Err(error("backend_unavailable"));
+        }
         let status = response.status().as_u16();
         if status == 401 {
             let mut credentials = self.credentials.lock().await;
@@ -229,9 +248,13 @@ struct Exchange {
 }
 
 async fn checked(
+    state: &AuthState,
     response: std::result::Result<reqwest::Response, reqwest::Error>,
 ) -> Result<reqwest::Response> {
     let response = response.map_err(|_| error("backend_unavailable"))?;
+    if !state.endpoint.accepts(&response) {
+        return Err(error("backend_unavailable"));
+    }
     if !response.status().is_success() {
         let code = response
             .json::<serde_json::Value>()
@@ -310,9 +333,10 @@ pub async fn auth_start(
     authorize(&window)?;
     let mut credentials = state.credentials.lock().await;
     let response = checked(
+        &state,
         state
             .client
-            .post(format!("{BASE}/desktop/start"))
+            .post(state.url("/api/v1/auth/desktop/start")?)
             .header("Origin", ORIGIN)
             .json(&serde_json::json!({}))
             .send()
@@ -332,11 +356,11 @@ pub async fn auth_start(
 }
 
 async fn user(state: &AuthState, token: Option<&str>) -> Result<Option<PublicUser>> {
-    let mut request = state.client.get(format!("{BASE}/me"));
+    let mut request = state.client.get(state.url("/api/v1/auth/me")?);
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
-    checked(request.send().await)
+    checked(&state, request.send().await)
         .await?
         .json()
         .await
@@ -373,9 +397,10 @@ pub async fn auth_poll(
         return Ok(None);
     };
     let response = checked(
+        &state,
         state
             .client
-            .post(format!("{BASE}/desktop/exchange"))
+            .post(state.url("/api/v1/auth/desktop/exchange")?)
             .header("Origin", ORIGIN)
             .json(&serde_json::json!({"secret":secret}))
             .send()
@@ -408,7 +433,7 @@ pub async fn auth_cancel(
     if let Some(secret) = credentials.exchange.take() {
         let _ = state
             .client
-            .post(format!("{BASE}/desktop/cancel"))
+            .post(state.url("/api/v1/auth/desktop/cancel")?)
             .header("Origin", ORIGIN)
             .json(&serde_json::json!({"secret": secret}))
             .send()
@@ -418,7 +443,7 @@ pub async fn auth_cancel(
     if let Some(token) = credentials.token.take() {
         let _ = state
             .client
-            .post(format!("{BASE}/logout"))
+            .post(state.url("/api/v1/auth/logout")?)
             .header("Origin", ORIGIN)
             .bearer_auth(token)
             .json(&serde_json::json!({}))
@@ -451,9 +476,10 @@ pub async fn auth_logout(
     drop(credentials);
     if let Some(token) = token {
         checked(
+            &state,
             state
                 .client
-                .post(format!("{BASE}/logout"))
+                .post(state.url("/api/v1/auth/logout")?)
                 .header("Origin", ORIGIN)
                 .bearer_auth(token)
                 .json(&serde_json::json!({}))
@@ -613,7 +639,7 @@ pub(crate) async fn request_authenticated_traced(
         }
         let mut builder = state
             .client
-            .post(format!("http://127.0.0.1:8000{}", kind.path()))
+            .post(state.url(kind.path())?)
             .header("Origin", ORIGIN)
             .header("X-Request-ID", &trace.request_id)
             .header("X-Solveguide-Trace-ID", &trace.trace_id)
@@ -628,6 +654,9 @@ pub(crate) async fn request_authenticated_traced(
         let sent = builder.send().await;
         headers_timer.finish(if sent.is_ok() { "completed" } else { "failed" });
         let response = sent.map_err(|e| error(diag::http_error(&e)))?;
+        if !state.endpoint.accepts(&response) {
+            return Err(error("backend_unavailable"));
+        }
         let status = response.status();
         response_status = Some(status.as_u16());
         let mut body_timer =

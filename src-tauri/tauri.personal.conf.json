@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SolveGuide AI Personal",
+  "identifier": "com.solveguide.desktop.personal",
+  "build": {
+    "beforeBuildCommand": "npm run build"
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "useLocalToolsDir": true,
+    "resources": {"../.cache/personal-desktop-backend/": "backend/"},
+    "windows": {"nsis": {"installMode": "currentUser"}}
+  }
+}

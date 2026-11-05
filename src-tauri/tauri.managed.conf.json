@@ -1,0 +1,10 @@
+{
+  "build": {
+    "beforeBuildCommand": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stage-backend.ps1 && npm run build"
+  },
+  "bundle": {
+    "resources": {
+      "../.cache/desktop-backend/": "backend/"
+    }
+  }
+}

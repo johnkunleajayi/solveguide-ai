@@ -1,4 +1,5 @@
 mod auth;
+mod backend;
 mod capture;
 mod context_library;
 mod diagnostics;
@@ -8,7 +9,6 @@ mod privacy;
 use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
-        .manage(auth::AuthState::default())
         .manage(monitor::MonitorState::default())
         .manage(std::sync::Arc::new(capture::CaptureState::default()))
         .invoke_handler(tauri::generate_handler![
@@ -37,25 +37,29 @@ pub fn run() {
                     "stopped",
                     "Application closed.",
                 );
+                window.state::<backend::BackendState>().stop();
                 if let Some(panel) = window.app_handle().get_webview_window("answer-panel") {
                     let _ = panel.destroy();
                 }
             }
         })
         .setup(|app| {
+            let backend =
+                backend::BackendState::launch(app.handle()).map_err(std::io::Error::other)?;
+            let auth =
+                auth::AuthState::with_backend(backend.endpoint()).map_err(std::io::Error::other)?;
+            app.manage(backend);
+            app.manage(auth);
+            let runtime = backend::runtime_dir(app.handle()).map_err(std::io::Error::other)?;
             // Keep the WebView profile and local appearance storage in the official workspace.
-            let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .expect("the native shell must live inside the workspace");
             let privacy = privacy::PrivacyState::new(
-                workspace
-                    .join(".cache")
+                runtime
                     .join("preferences")
                     .join("screen-share-privacy.json"),
             );
             let window =
                 tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
-                    .data_directory(workspace.join(".cache").join("webview"))
+                    .data_directory(runtime.join("webview"))
                     .visible(false)
                     .build()?;
             // Apply/verify before first show. Failure never prevents the window opening.
@@ -81,6 +85,7 @@ pub fn run() {
                     "stopped",
                     "Application closed.",
                 );
+                app.state::<backend::BackendState>().stop();
             }
         });
 }
